@@ -1,3 +1,151 @@
+function parseHTML(str) {
+    const tmp = document.implementation.createHTMLDocument('');
+    tmp.body.innerHTML = str;
+    return [...tmp.body.childNodes];
+}
+
+class ExtraNetworksClusterizeList {
+    #div_id_visible = {};
+    #div_id_children = {};
+    #data_obj = {};
+    #rows = [];
+    #clusterize;
+    constructor(
+        {
+            data_json_path,
+            scroll_id,
+            content_id,
+            rows_in_block = 10,
+            blocks_in_cluster = 4,
+            show_no_data_row = true,
+            callbacks = {},
+        } = {
+            rows_in_block: 10,
+            blocks_in_cluster: 4,
+            show_no_data_row: true,
+            callbacks: {},
+        }
+    ) {
+        if (data_json_path === undefined) {
+            console.error("data_json_path is undefined!");
+        }
+        if (scroll_id === undefined) {
+            console.error("scroll_id is undefined!");
+        }
+        if (content_id === undefined) {
+            console.error("content_id is undefined!");
+        }
+
+        this.parse_json(data_json_path);
+        this.#data_obj = JSON.parse(JSON.stringify(data_obj)); // deepcopy
+        this.#clusterize = new Clusterize(
+            {
+                rows: this.#rows,
+                scrollId: scroll_id,
+                contentId: content_id,
+                rows_in_block: rows_in_block,
+                blocks_in_cluster: blocks_in_cluster,
+                show_no_data_row: show_no_data_row,
+                callbacks: callbacks,
+            }
+        );
+        this.update_rows();
+    }
+
+    parse_json(fp) {
+        fetch(fp)
+            .then(res => res.json())
+            .then(res => {
+                for (const [k, v] of Object.entries(res)) {
+                    let div_id = k;
+                    let parsed_html = parseHTML(v)[0];
+                    let parent_id = parsed_html.dataset.parentId;
+                    let depth = parsed_html.dataset.depth;
+                    parsed_html.style.paddingLeft = `${depth}em`;
+                    parsed_html.style.boxShadow = getBoxShadow(parsed_html, depth);
+                    // Add the updated html to the list of rows.
+                    this.#rows[div_id] = parsed_html.outerHTML;
+
+                    // Get default visibility.
+                    this.#div_id_visible[div_id] = "expanded" in parsed_html.dataset;
+                    
+                    // Build parent/child relationship mappings.
+                    if (!(div_id in this.#div_id_children)) {
+                        this.#div_id_children[div_id] = [];
+                    }
+                    if (!(parent_id in this.#div_id_children)) {
+                        this.#div_id_children[parent_id] = [];
+                    }
+                    this.#div_id_children[parent_id].push(div_id);
+                }
+            })
+            .catch((error) => console.error("Error parsing data JSON:", error));
+    }
+
+    update_rows() {
+        const data = [];
+        var collator = new Intl.Collator([], {numeric: true});
+        for (const div_id of Object.keys(this.#data_obj).sort((a, b) => collator.compare(a, b))) {
+            if (this.#div_id_visible[div_id]) {
+                data.push(this.#data_obj[div_id]);
+            }
+        }
+        this.#clusterize.update(data);
+    }
+}
+
+function setupExtraNetworkEventDelegators() {
+    // Using event delegation will make it so we don't have an event handler
+    // for every single element. This helps to improve performance.
+
+    delegate(document, "click", ".card", function(el, event) {
+        let pane = this.closest(".extra-network-pane");
+        cardClicked(
+            pane.dataset.tabname,
+            this.dataset.prompt,
+            this.dataset.negPrompt,
+            pane.dataset.allowNeg,
+        );
+    });
+
+    delegate(document, "click", ".copy-path-button", function(event) {
+        extraNetworksCopyCardPath(event, this.dataset.clipboardText);
+    });
+
+    delegate(document, "click", ".metadata-button", function(event) {
+        let card = this.closest(".card");
+        let pane = this.closest(".extra-network-pane");
+        extraNetworksRequestMetadata(
+            event,
+            pane.dataset.extraNetworksTabname,
+            card.dataset.name,
+        );
+    });
+
+    delegate(document, "click", ".edit-button", function(event) {
+        let card = this.closest(".card");
+        let pane = this.closest(".extra-network-pane");
+        extraNetworksEditUserMetadata(
+            event,
+            pane.dataset.tabname,
+            pane.dataset.extraNetworksTabname,
+            card.dataset.name,
+        );
+    });
+
+
+    delegate(document, "click", ".tree-list-content", function(event) {
+        let pane = this.closest(".extra-network-pane");
+        let btn = this.closest(".tree-list-item");
+        extraNetworksTreeOnClick(
+            event,
+            btn,
+            pane.dataset.tabname,
+            pane.dataset.extraNetworksTabname,
+        );
+    });
+}
+
 function toggleCss(key, css, enable) {
     var style = document.getElementById(key);
     if (enable && !style) {
@@ -42,6 +190,12 @@ function setupExtraNetworksForTab(tabname) {
         var sort_mode = gradioApp().querySelector("#" + tabname_full + "_extra_sort");
         var sort_dir = gradioApp().querySelector("#" + tabname_full + "_extra_sort_dir");
         var refresh = gradioApp().querySelector("#" + tabname_full + "_extra_refresh");
+
+        var clusterize = new ExtraNetworksClusterizeList(
+            `./${tabname_full}_tree_list.json`,
+            `${tabname_full}-tree-list-scroll-area`,
+            `${tabname_full}-tree-list-content-area`,
+        );
 
         // If any of the buttons above don't exist, we want to skip this iteration of the loop.
         if (!search || !sort_mode || !sort_dir || !refresh) {
@@ -195,6 +349,7 @@ var activePromptTextarea = {};
 function setupExtraNetworks() {
     setupExtraNetworksForTab('txt2img');
     setupExtraNetworksForTab('img2img');
+    setupExtraNetworkEventDelegators();
 }
 
 var re_extranet = /<([^:^>]+:[^:]+):[\d.]+>(.*)/;
@@ -304,15 +459,20 @@ function extraNetworksTreeProcessDirectoryClick(event, btn, tabname, extra_netwo
     // This is the actual target that the user clicked on within the target button.
     // We use this to detect if the chevron was clicked.
     var true_targ = event.target;
+    const div_id = btn.dataset.divId;
 
-    function _expand_or_collapse(_ul, _btn) {
-        // Expands <ul> if it is collapsed, collapses otherwise. Updates button attributes.
-        if (_ul.hasAttribute("hidden")) {
-            _ul.removeAttribute("hidden");
-            _btn.dataset.expanded = "";
-        } else {
-            _ul.setAttribute("hidden", "");
+    function _expand_or_collapse(_btn) {
+        // Hides all children of the button.
+        if ("expanded" in _btn.dataset) {
             delete _btn.dataset.expanded;
+            rows_dict[div_id] = _btn.outerHTML; // update html after changing attr
+            remove_child_rows(div_id);
+            update_rows();
+        } else {
+            _btn.dataset.expanded = "";
+            rows_dict[div_id] = _btn.outerHTML; // update html after changing attr
+            add_child_rows(div_id);
+            update_rows();
         }
     }
 
@@ -340,29 +500,22 @@ function extraNetworksTreeProcessDirectoryClick(event, btn, tabname, extra_netwo
 
     // If user clicks on the chevron, then we do not select the folder.
     if (true_targ.matches(".tree-list-item-action--leading, .tree-list-item-action-chevron")) {
-        _expand_or_collapse(ul, btn);
+        _expand_or_collapse(btn);
     } else {
         // User clicked anywhere else on the button.
-        if ("selected" in btn.dataset && !(ul.hasAttribute("hidden"))) {
-            // If folder is select and open, collapse and deselect button.
-            _expand_or_collapse(ul, btn);
+        if ("selected" in btn.dataset) {
+            // If folder is selected, deselect button.
             delete btn.dataset.selected;
             _update_search(tabname, extra_networks_tabname, "");
-        } else if (!(!("selected" in btn.dataset) && !(ul.hasAttribute("hidden")))) {
-            // If folder is open and not selected, then we don't collapse; just select.
-            // NOTE: Double inversion sucks but it is the clearest way to show the branching here.
-            _expand_or_collapse(ul, btn);
-            _select_button(btn, tabname, extra_networks_tabname);
-            _update_search(tabname, extra_networks_tabname, btn.dataset.path);
         } else {
-            // All other cases, just select the button.
+            // If folder is not selected, select it.
             _select_button(btn, tabname, extra_networks_tabname);
             _update_search(tabname, extra_networks_tabname, btn.dataset.path);
         }
     }
 }
 
-function extraNetworksTreeOnClick(event, tabname, extra_networks_tabname) {
+function extraNetworksTreeOnClick(event, btn, tabname, extra_networks_tabname) {
     /**
      * Handles `onclick` events for buttons within an `extra-network-tree .tree-list--tree`.
      *
@@ -373,9 +526,7 @@ function extraNetworksTreeOnClick(event, tabname, extra_networks_tabname) {
      * @param tabname                   The name of the active tab in the sd webui. Ex: txt2img, img2img, etc.
      * @param extra_networks_tabname    The id of the active extraNetworks tab. Ex: lora, checkpoints, etc.
      */
-    var btn = event.currentTarget;
-    var par = btn.parentElement;
-    if (par.dataset.treeEntryType === "file") {
+    if (btn.dataset.treeEntryType === "file") {
         extraNetworksTreeProcessFileClick(event, btn, tabname, extra_networks_tabname);
     } else {
         extraNetworksTreeProcessDirectoryClick(event, btn, tabname, extra_networks_tabname);
