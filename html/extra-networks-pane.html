@@ -1,4 +1,8 @@
-<div id='{tabname}_{extra_networks_tabname}_pane' class='extra-network-pane'>
+<div
+    id='{tabname}_{extra_networks_tabname}_pane'
+    class='extra-network-pane'
+    data-tabname={tabname}
+    data-extra-networks-tabname={extra_networks_tabname}>
     <div class="extra-network-control" id="{tabname}_{extra_networks_tabname}_controls" style="display:none" >
         <div class="extra-network-control--search">
             <input
@@ -8,7 +12,7 @@
                 placeholder="Filter files"
             >
         </div>
-        <div 
+        <div
             id="{tabname}_{extra_networks_tabname}_extra_sort"
             class="extra-network-control--sort"
             data-sortmode="{data_sortmode}"
@@ -45,11 +49,11 @@
         </div>
     </div>
     <div class="extra-network-pane-content resize-handle-row" style="display: {extra_network_pane_content_default_display};">
-        <div id='{tabname}_{extra_networks_tabname}_tree' class='extra-network-tree {tree_view_div_extra_class}' style='flex-basis: {extra_networks_tree_view_default_width}px; display: {tree_view_div_default_display};'>
-            {tree_html}
+        <div id='{tabname}_{extra_networks_tabname}_tree_list_scroll_area' class='clusterize-scroll extra-network-tree {tree_view_div_extra_class}' style='flex-basis: {extra_networks_tree_view_default_width}px; display: {tree_view_div_default_display};'>
+            <div id='{tabname}_{extra_networks_tabname}_tree_list_content_area' class='clusterize-content'></div>
         </div>
-        <div id='{tabname}_{extra_networks_tabname}_cards' class='extra-network-cards' style='flex-grow: 1;'>
-            {items_html}
+        <div id='{tabname}_{extra_networks_tabname}_cards_list_scroll_area' class='clusterize-scroll extra-network-cards' style='flex-grow: 1;'>
+            <div id='{tabname}_{extra_networks_tabname}_cards_list_content_area' class='clusterize-content'></div>
         </div>
     </div>
 </div>

@@ -5,6 +5,7 @@ import sys
 from functools import reduce
 import warnings
 from contextlib import ExitStack
+from pathlib import Path
 
 import gradio as gr
 import gradio.utils
@@ -1242,3 +1243,4 @@ def setup_ui_api(app):
 
     import fastapi.staticfiles
     app.mount("/webui-assets", fastapi.staticfiles.StaticFiles(directory=launch_utils.repo_dir('stable-diffusion-webui-assets')), name="webui-assets")
+    app.mount("/tmpdir", fastapi.staticfiles.StaticFiles(directory=Path("./tmpdir")), name="tmpdir")

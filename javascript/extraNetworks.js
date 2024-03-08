@@ -4,26 +4,43 @@ function parseHTML(str) {
     return [...tmp.body.childNodes];
 }
 
-class ExtraNetworksClusterizeList {
-    #div_id_visible = {};
-    #div_id_children = {};
-    #data_obj = {};
-    #rows = [];
-    #clusterize;
+function getBoxShadow(depth) {
+    let res = "";
+    var style = getComputedStyle(document.body);
+    let bg = style.getPropertyValue("--body-background-fill");
+    let fg = style.getPropertyValue("--neutral-800");
+    for (let i = 1; i <= depth; i++) {
+        res += `${i - 0.6}rem 0 0 ${bg} inset,`;
+        res += `${i - 0.4}rem 0 0 ${fg} inset`;
+        res += (i+1 > depth) ? "" : ", ";
+    }
+    return res;
+}
+
+class ExtraNetworksClusterize {
     constructor(
         {
             data_json_path,
             scroll_id,
             content_id,
+            done_fn,
             rows_in_block = 10,
             blocks_in_cluster = 4,
             show_no_data_row = true,
-            callbacks = {},
+            callbacks = {
+                clusterWillChange: this.clusterWillChange,
+                clusterChanged: this.clusterChanged,
+                scrollingProgress: this.scrollingProgress,
+            },
         } = {
             rows_in_block: 10,
             blocks_in_cluster: 4,
             show_no_data_row: true,
-            callbacks: {},
+            callbacks: {
+                clusterWillChange: this.clusterWillChange,
+                clusterChanged: this.clusterChanged,
+                scrollingProgress: this.scrollingProgress,
+            },
         }
     ) {
         if (data_json_path === undefined) {
@@ -36,114 +53,259 @@ class ExtraNetworksClusterizeList {
             console.error("content_id is undefined!");
         }
 
-        this.parse_json(data_json_path);
-        this.#data_obj = JSON.parse(JSON.stringify(data_obj)); // deepcopy
-        this.#clusterize = new Clusterize(
+        this.data_json_path = data_json_path;
+        this.scroll_id = scroll_id;
+        this.content_id = content_id;
+        this.done_fn = done_fn;
+        this.rows_in_block = rows_in_block;
+        this.blocks_in_cluster = blocks_in_cluster;
+        this.show_no_data_row = show_no_data_row;
+        this.callbacks = {};//callbacks;
+
+        this.sort_fn = this.sort_by_id; // default sort by div_id
+        this.sort_asc = true; // default 0->9, A->Z
+
+        this.data_obj = {};
+
+        this.clusterize = new Clusterize(
             {
-                rows: this.#rows,
-                scrollId: scroll_id,
-                contentId: content_id,
-                rows_in_block: rows_in_block,
-                blocks_in_cluster: blocks_in_cluster,
-                show_no_data_row: show_no_data_row,
-                callbacks: callbacks,
+                rows: [],
+                scrollId: this.scroll_id,
+                contentId: this.content_id,
+                rows_in_block: this.rows_in_block,
+                blocks_in_cluster: this.blocks_in_cluster,
+                show_no_data_row: this.show_no_data_row,
+                callbacks: this.callbacks,
             }
         );
-        this.update_rows();
     }
 
-    parse_json(fp) {
-        fetch(fp)
+    clusterWillChange() {
+        console.log("clusterWillChange");
+    }
+    
+    clusterChanged() {
+        console.log("clusterChanged");
+    }
+    
+    scrollingProgress(p) {
+        console.log("scrollingProgress:", p);
+    }
+
+    sort_by_id(obj) {
+        const collator = new Intl.Collator([], {numeric: true});
+        var res = Object.keys(obj).sort((a, b) => collator.compare(a, b));
+        return this.sort_asc ? res : res.reverse();
+    }
+
+    sort_by_name(obj) {
+        const collator = new Intl.Collator("en", {numeric: true, sensitivity: "base"});
+        var res = Object.keys(obj).sort((a, b) => collator.compare(a, b));
+        return this.sort_asc ? res : res.reverse();
+    }
+
+    filter_rows(obj) {
+        var results = [];
+        for (const div_id of this.sort_fn(obj)) {
+            if (obj[div_id].active) {
+                results.push(obj[div_id].element.outerHTML);
+            }
+        }
+        return results;
+    }
+
+    update_div(div_id, content) {
+        /** Updates an element in the dataset. Does not call update_rows(). */
+        if (!(div_id in this.data_obj)) {
+            console.error("div_id not in data_obj:", div_id);
+        } else if (typeof content === "object") {
+            this.data_obj[div_id].element = parseHTML(content.outerHTML)[0];
+            return true;
+        } else if (typeof content === "string") {
+            this.data_obj[div_id].element = parseHTML(content)[0];
+            return true;
+        } else {
+            console.error("Invalid content:", div_id, content);
+        }
+
+        return false;
+    }
+
+    update_rows() {
+        this.clusterize.update(this.filter_rows(this.data_obj));
+    }
+
+    nrows() {
+        return this.clusterize.getRowsAmount();
+    }
+
+    rebuild() {
+        this.clusterize.destroy();
+        this.clusterize = new Clusterize(
+            {
+                rows: [],
+                scrollId: this.scroll_id,
+                contentId: this.content_id,
+                rows_in_block: this.rows_in_block,
+                blocks_in_cluster: this.blocks_in_cluster,
+                show_no_data_row: this.show_no_data_row,
+                callbacks: this.callbacks,
+            }
+        );
+        this.parse_json();
+    }
+}
+
+class ExtraNetworksClusterizeTreeList extends ExtraNetworksClusterize {
+    constructor(...args) {
+        super(...args);
+        this.div_id_children = {};
+    }
+
+    parse_json() {
+        fetch(this.data_json_path)
             .then(res => res.json())
             .then(res => {
                 for (const [k, v] of Object.entries(res)) {
                     let div_id = k;
                     let parsed_html = parseHTML(v)[0];
-                    let parent_id = parsed_html.dataset.parentId;
-                    let depth = parsed_html.dataset.depth;
+                    let parent_id = "parentId" in parsed_html.dataset ? parsed_html.dataset.parentId : -1;
+                    let depth = Number(parsed_html.dataset.depth);
                     parsed_html.style.paddingLeft = `${depth}em`;
-                    parsed_html.style.boxShadow = getBoxShadow(parsed_html, depth);
-                    // Add the updated html to the list of rows.
-                    this.#rows[div_id] = parsed_html.outerHTML;
-
-                    // Get default visibility.
-                    this.#div_id_visible[div_id] = "expanded" in parsed_html.dataset;
-                    
-                    // Build parent/child relationship mappings.
-                    if (!(div_id in this.#div_id_children)) {
-                        this.#div_id_children[div_id] = [];
-                    }
-                    if (!(parent_id in this.#div_id_children)) {
-                        this.#div_id_children[parent_id] = [];
-                    }
-                    this.#div_id_children[parent_id].push(div_id);
+                    parsed_html.style.boxShadow = getBoxShadow(depth);
+                    // Add the updated html to the data object.
+                    this.data_obj[div_id] = {
+                        element: parsed_html,
+                        active: false,
+                        expanded: "expanded" in parsed_html.dataset,
+                        parent: parent_id,
+                        children: [], // populated later
+                    };
                 }
+
+                // Build list of children for each element in dataset.
+                for (const [k, v] of Object.entries(this.data_obj)) {
+                    if (v.parent === -1) {
+                        continue;
+                    } else if (!(v.parent in this.data_obj)) {
+                        console.error("parent not in data:", v.parent);
+                    } else {
+                        this.data_obj[v.parent].children.push(k);
+                    }
+                }
+
+                // Handle expanding of rows on initial load
+                for (const [k, v] of Object.entries(this.data_obj)) {
+                    if (!(v.parent in this.data_obj) && v.expanded) {
+                        this.data_obj[k].active = true;
+                    } else if (v.parent !== -1 && this.data_obj[v.parent].expanded && this.data_obj[v.parent].active) {
+                        this.data_obj[k].active = true;
+                    }
+                }
+
+                this.update_rows();
+                this.done_fn(this);
             })
-            .catch((error) => console.error("Error parsing data JSON:", error));
+            .catch((error) => console.error("Error parsing data JSON:", this.data_json_path, error));
     }
 
-    update_rows() {
-        const data = [];
-        var collator = new Intl.Collator([], {numeric: true});
-        for (const div_id of Object.keys(this.#data_obj).sort((a, b) => collator.compare(a, b))) {
-            if (this.#div_id_visible[div_id]) {
-                data.push(this.#data_obj[div_id]);
-            }
+    remove_child_rows(div_id) {
+        for (const child_id of this.data_obj[div_id].children) {
+            this.data_obj[child_id].active = false;
+            this.remove_child_rows(child_id);
         }
-        this.#clusterize.update(data);
+    }
+    
+    add_child_rows(div_id) {
+        for (const child_id of this.data_obj[div_id].children) {
+            this.data_obj[child_id].active = true;
+            this.add_child_rows(child_id);
+        }
     }
 }
+
+class ExtraNetworksClusterizeCardsList extends ExtraNetworksClusterize {
+    constructor(...args) {
+        super(...args);
+    }
+
+    parse_json() {
+        fetch(this.data_json_path)
+            .then(res => res.json())
+            .then(res => {
+                for (const [k, v] of Object.entries(res)) {
+                    let div_id = k;
+                    let parsed_html = parseHTML(v)[0];
+                    // Add the updated html to the data object.
+                    this.data_obj[div_id] = {
+                        element: parsed_html,
+                        active: true,
+                    };
+                }
+
+                this.update_rows();
+                this.done_fn(this);
+            })
+            .catch((error) => console.error("Error parsing data JSON:", this.data_json_path, error));
+    }
+
+    filter(search_str) {
+        search_str = search_str.toLowerCase();
+        for (const [k, v] of Object.entries(this.data_obj)) {
+            let search_only = v.element.querySelector(".search_only");
+            let text = Array.prototype.map.call(v.element.querySelectorAll(".search_terms"), function(t) {
+                return t.textContent.toLowerCase();
+            }).join(" ");
+
+            let visible = text.indexOf(search_str) != -1;
+            if (search_only && search_str.length < 4) {
+                visible = false;
+            }
+            this.data_obj[k].active = visible;
+            if (!this.update_div(k, v.element)) {
+                console.error("error updating div:", k, v);
+            }
+        }
+
+        this.update_rows();
+    }
+
+    sort(order, mode_str, mode_key, force) {
+        let reverse = order == "Descending";
+        let key = mode_str.toLowerCase().replace("sort", "").replaceAll(" ", "_").replace(/_+$/, "").trim() || "name";
+        key = "sort" + key.charAt(0).toUpperCase() + key.slice(1);
+        let key_store = key + "-" + (reverse ? "Descending" : "Ascending") + "-" + Object.keys(this.data_obj).length;
+        
+        if (key_store == mode_key && !force) {
+            return;
+        }
+
+        let div_ids_sorted = Array.from(Object.keys(this.data_obj));
+        div_ids_sorted.sort(function(a, b) {
+            
+        })
+        
+        return key_store;
+    }
+}
+
+function delegate(target, event_name, selector, handler) {
+    target.addEventListener(event_name, (event) => {
+        if (event.target.closest(selector)) {
+            handler.call(event.target, event);
+        }
+    });
+}
+
+function extraNetworksCopyCardPath(event, path) {
+    navigator.clipboard.writeText(path);
+    event.stopPropagation();
+}
+
 
 function setupExtraNetworkEventDelegators() {
     // Using event delegation will make it so we don't have an event handler
     // for every single element. This helps to improve performance.
-
-    delegate(document, "click", ".card", function(el, event) {
-        let pane = this.closest(".extra-network-pane");
-        cardClicked(
-            pane.dataset.tabname,
-            this.dataset.prompt,
-            this.dataset.negPrompt,
-            pane.dataset.allowNeg,
-        );
-    });
-
-    delegate(document, "click", ".copy-path-button", function(event) {
-        extraNetworksCopyCardPath(event, this.dataset.clipboardText);
-    });
-
-    delegate(document, "click", ".metadata-button", function(event) {
-        let card = this.closest(".card");
-        let pane = this.closest(".extra-network-pane");
-        extraNetworksRequestMetadata(
-            event,
-            pane.dataset.extraNetworksTabname,
-            card.dataset.name,
-        );
-    });
-
-    delegate(document, "click", ".edit-button", function(event) {
-        let card = this.closest(".card");
-        let pane = this.closest(".extra-network-pane");
-        extraNetworksEditUserMetadata(
-            event,
-            pane.dataset.tabname,
-            pane.dataset.extraNetworksTabname,
-            card.dataset.name,
-        );
-    });
-
-
-    delegate(document, "click", ".tree-list-content", function(event) {
-        let pane = this.closest(".extra-network-pane");
-        let btn = this.closest(".tree-list-item");
-        extraNetworksTreeOnClick(
-            event,
-            btn,
-            pane.dataset.tabname,
-            pane.dataset.extraNetworksTabname,
-        );
-    });
 }
 
 function toggleCss(key, css, enable) {
@@ -163,6 +325,10 @@ function toggleCss(key, css, enable) {
     }
 }
 
+function clusterize_setup_done(clusterize) {
+}
+
+const clusterizers = {};
 function setupExtraNetworksForTab(tabname) {
     function registerPrompt(tabname, id) {
         var textarea = gradioApp().querySelector("#" + id + " > label > textarea");
@@ -191,18 +357,36 @@ function setupExtraNetworksForTab(tabname) {
         var sort_dir = gradioApp().querySelector("#" + tabname_full + "_extra_sort_dir");
         var refresh = gradioApp().querySelector("#" + tabname_full + "_extra_refresh");
 
-        var clusterize = new ExtraNetworksClusterizeList(
-            `./${tabname_full}_tree_list.json`,
-            `${tabname_full}-tree-list-scroll-area`,
-            `${tabname_full}-tree-list-content-area`,
-        );
-
         // If any of the buttons above don't exist, we want to skip this iteration of the loop.
         if (!search || !sort_mode || !sort_dir || !refresh) {
             return; // `return` is equivalent of `continue` but for forEach loops.
         }
 
+        if (!(tabname_full in clusterizers)) {
+            clusterizers[tabname_full] = {tree_list: undefined, cards_list: undefined};
+        }
+
+        // Add a clusterizer for the tree list and for the cards list.
+        clusterizers[tabname_full].tree_list = new ExtraNetworksClusterizeTreeList(
+            {
+                data_json_path: `./tmpdir/${tabname_full}_tree_list.json`,
+                scroll_id: `${tabname_full}_tree_list_scroll_area`,
+                content_id: `${tabname_full}_tree_list_content_area`,
+                done_fn: clusterize_setup_done,
+            }
+        );
+        clusterizers[tabname_full].cards_list = new ExtraNetworksClusterizeCardsList(
+            {
+                data_json_path: `./tmpdir/${tabname_full}_cards_list.json`,
+                scroll_id: `${tabname_full}_cards_list_scroll_area`,
+                content_id: `${tabname_full}_cards_list_content_area`,
+                done_fn: clusterize_setup_done,
+            }
+        );
+
         var applyFilter = function(force) {
+            clusterizers[tabname_full].cards_list.filter(search.value);
+            return;
             var searchTerm = search.value.toLowerCase();
             gradioApp().querySelectorAll('#' + tabname + '_extra_tabs div.card').forEach(function(elem) {
                 var searchOnly = elem.querySelector('.search_only');
@@ -215,9 +399,11 @@ function setupExtraNetworksForTab(tabname) {
                     visible = false;
                 }
                 if (visible) {
-                    elem.classList.remove("hidden");
+                    //elem.classList.remove("hidden");
+                    delete elem.dataset.visible;
                 } else {
-                    elem.classList.add("hidden");
+                    //elem.classList.add("hidden");
+                    elem.dataset.visible = "";
                 }
             });
 
@@ -260,7 +446,14 @@ function setupExtraNetworksForTab(tabname) {
             });
         };
 
-        search.addEventListener("input", applyFilter);
+        let typing_timer;
+        let done_typing_interval = 500;
+        search.addEventListener("keyup", () => {
+            clearTimeout(typing_timer);
+            if (search.value) {
+                typing_timer = setTimeout(applyFilter, done_typing_interval);
+            }
+        });
         applySort();
         applyFilter();
         extraNetworksApplySort[tabname_full] = applySort;
@@ -316,12 +509,15 @@ function extraNetworksUnrelatedTabSelected(tabname) { // called from python when
     extraNetworksMovePromptToTab(tabname, '', false, false);
 
     extraNetworksShowControlsForPage(tabname, null);
+    console.log("extraNetworksUnrelatedTabSelected:", tabname);
 }
 
 function extraNetworksTabSelected(tabname, id, showPrompt, showNegativePrompt, tabname_full) { // called from python when user selects an extra networks tab
     extraNetworksMovePromptToTab(tabname, id, showPrompt, showNegativePrompt);
-
     extraNetworksShowControlsForPage(tabname, tabname_full);
+    console.log("extraNetworksTabSelected:", tabname, id, tabname_full);
+    clusterizers[tabname_full].tree_list.rebuild();
+    clusterizers[tabname_full].cards_list.rebuild();
 }
 
 function applyExtraNetworkFilter(tabname_full) {
@@ -436,7 +632,14 @@ function extraNetworksTreeProcessFileClick(event, btn, tabname, extra_networks_t
      * @param tabname                   The name of the active tab in the sd webui. Ex: txt2img, img2img, etc.
      * @param extra_networks_tabname    The id of the active extraNetworks tab. Ex: lora, checkpoints, etc.
      */
-    // NOTE: Currently unused.
+    /*
+    cardClicked(
+        tabname,
+        btn.dataset.prompt,
+        btn.dataset.neg_prompt,
+        btn.dataset.allow_neg,
+    );
+    */
     return;
 }
 
@@ -455,30 +658,29 @@ function extraNetworksTreeProcessDirectoryClick(event, btn, tabname, extra_netwo
      * @param tabname                   The name of the active tab in the sd webui. Ex: txt2img, img2img, etc.
      * @param extra_networks_tabname    The id of the active extraNetworks tab. Ex: lora, checkpoints, etc.
      */
-    var ul = btn.nextElementSibling;
     // This is the actual target that the user clicked on within the target button.
     // We use this to detect if the chevron was clicked.
     var true_targ = event.target;
     const div_id = btn.dataset.divId;
+    const tabname_full = `${tabname}_${extra_networks_tabname}`;
 
     function _expand_or_collapse(_btn) {
-        // Hides all children of the button.
+        // Expands/Collapses all children of the button.
         if ("expanded" in _btn.dataset) {
             delete _btn.dataset.expanded;
-            rows_dict[div_id] = _btn.outerHTML; // update html after changing attr
-            remove_child_rows(div_id);
-            update_rows();
+            clusterizers[tabname_full].tree_list.remove_child_rows(div_id);
         } else {
             _btn.dataset.expanded = "";
-            rows_dict[div_id] = _btn.outerHTML; // update html after changing attr
-            add_child_rows(div_id);
-            update_rows();
+            clusterizers[tabname_full].tree_list.add_child_rows(div_id);
         }
+        // update html after changing attr.
+        clusterizers[tabname_full].tree_list.update_div(div_id, _btn.outerHTML);
+        clusterizers[tabname_full].tree_list.update_rows();
     }
 
     function _remove_selected_from_all() {
         // Removes the `selected` attribute from all buttons.
-        var sels = document.querySelectorAll("div.tree-list-content");
+        var sels = document.querySelectorAll(".tree-list-item");
         [...sels].forEach(el => {
             delete el.dataset.selected;
         });
@@ -495,6 +697,7 @@ function extraNetworksTreeProcessDirectoryClick(event, btn, tabname, extra_netwo
         var search_input_elem = gradioApp().querySelector("#" + tabname + "_" + extra_networks_tabname + "_extra_search");
         search_input_elem.value = _search_text;
         updateInput(search_input_elem);
+        extraNetworksApplyFilter[tabname_full]();
     }
 
 
@@ -515,7 +718,7 @@ function extraNetworksTreeProcessDirectoryClick(event, btn, tabname, extra_netwo
     }
 }
 
-function extraNetworksTreeOnClick(event, btn, tabname, extra_networks_tabname) {
+function extraNetworksTreeOnClick(event, tabname, extra_networks_tabname) {
     /**
      * Handles `onclick` events for buttons within an `extra-network-tree .tree-list--tree`.
      *
@@ -526,11 +729,13 @@ function extraNetworksTreeOnClick(event, btn, tabname, extra_networks_tabname) {
      * @param tabname                   The name of the active tab in the sd webui. Ex: txt2img, img2img, etc.
      * @param extra_networks_tabname    The id of the active extraNetworks tab. Ex: lora, checkpoints, etc.
      */
+    let btn = event.target.closest(".tree-list-item");
     if (btn.dataset.treeEntryType === "file") {
         extraNetworksTreeProcessFileClick(event, btn, tabname, extra_networks_tabname);
     } else {
         extraNetworksTreeProcessDirectoryClick(event, btn, tabname, extra_networks_tabname);
     }
+    event.stopPropagation();
 }
 
 function extraNetworksControlSortOnClick(event, tabname, extra_networks_tabname) {
@@ -777,7 +982,7 @@ function requestGet(url, data, handler, errorHandler) {
     xhr.send(js);
 }
 
-function extraNetworksCopyCardPath(event, path) {
+function extraNetworksCopyPath(event, path) {
     navigator.clipboard.writeText(path);
     event.stopPropagation();
 }

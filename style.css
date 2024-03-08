@@ -945,13 +945,10 @@ footer {
     margin-left: 0.5em;
 }
 
-.extra-network-pane .card .button-row{
+.extra-network-pane .card .button-row {
     display: inline-flex;
     visibility: hidden;
     color: white;
-}
-
-.extra-network-pane .card .button-row {
     position: absolute;
     right: 0;
     z-index: 1;
@@ -963,6 +960,10 @@ footer {
 
 .extra-network-pane .card-button{
     color: white;
+    width: 1.5em;
+    text-shadow: 2px 2px 3px black;
+    color: white;
+    padding: 0.25em 0.1em;
 }
 
 .extra-network-pane .copy-path-button::before {
@@ -977,23 +978,12 @@ footer {
     content: "🛠";
 }
 
-.extra-network-pane .card-button {
-    width: 1.5em;
-    text-shadow: 2px 2px 3px black;
-    color: white;
-    padding: 0.25em 0.1em;
-}
-
 .extra-network-pane .card-button:hover{
     color: red;
 }
 
 .extra-network-pane .card .card-button {
-    font-size: 2rem;
-}
-
-.extra-network-pane .card-minimal .card-button {
-    font-size: 1rem;
+    font-size: 1em;
 }
 
 .standalone-card-preview.card .preview{
@@ -1196,6 +1186,30 @@ body.resizing .resize-handle {
 }
 
 /* ========================= */
+.clusterize-scroll {
+    height: 100%;
+    width: 100%;
+    overflow: auto;
+}
+
+.clusterize-content {
+    outline: 0;
+    counter-reset: clusterize-counter;
+}
+
+.clusterize-extra-row {
+    margin-top: 0 !important;
+    margin-bottom: 0 !important;
+}
+
+.clusterize-extra-row.clusterize-keep-parity {
+    display: none;
+}
+
+.clusterize-no-data {
+    text-align: center;
+}
+
 .extra-network-pane {
     display: flex;
     height: calc(100vh - 24rem);
@@ -1203,6 +1217,27 @@ body.resizing .resize-handle {
     min-height: 52rem;
     flex-direction: column;
     overflow: hidden;
+}
+
+
+.clusterize-scroll::-webkit-scrollbar {
+    background-color: transparent;
+    width: 16px;
+}
+
+.clusterize-scroll::-webkit-scrollbar-track {
+    background-color: transparent;
+    background-clip: content-box;
+}
+
+.clusterize-scroll::-webkit-scrollbar-thumb {
+    background-color: var(--border-color-primary);
+    border-radius: 16px;
+    border: 4px solid var(--background-fill-primary);
+}
+
+.clusterize-scroll::-webkit-scrollbar-button {
+    display: none;
 }
 
 .extra-network-pane .extra-network-pane-content {
@@ -1278,52 +1313,6 @@ body.resizing .resize-handle {
 }
 
 .extra-network-tree .tree-list--tree {}
-
-/* Remove auto indentation from tree. Will be overridden later. */
-.extra-network-tree .tree-list--subgroup {
-    margin: 0 !important;
-    padding: 0 !important;
-    box-shadow: 0.5rem 0 0 var(--body-background-fill) inset,
-                0.7rem 0 0 var(--neutral-800) inset;
-}
-
-/* Set indentation for each depth of tree. */
-.extra-network-tree .tree-list--subgroup > .tree-list-item {
-    margin-left: 0.4rem !important;
-    padding-left: 0.4rem !important;
-}
-
-/* Styles for tree <li> elements. */
-.extra-network-tree .tree-list-item {
-    list-style: none;
-    position: relative;
-    background-color: transparent;
-}
-
-/* Directory <ul> visibility based on data-expanded attribute. */
-.extra-network-tree .tree-list-content+.tree-list--subgroup {
-    height: 0;
-    visibility: hidden;
-    opacity: 0;
-}
-
-.extra-network-tree .tree-list-content[data-expanded]+.tree-list--subgroup {
-    height: auto;
-    visibility: visible;
-    opacity: 1;
-}
-
-/* File <li> */
-.extra-network-tree .tree-list-item--subitem {
-    padding-top: 0 !important;
-    padding-bottom: 0 !important;
-    margin-top: 0 !important;
-    margin-bottom: 0 !important;
-}
-
-/* <li> containing <ul> */
-.extra-network-tree .tree-list-item--has-subitem {}
-
 /* BUTTON ELEMENTS */
 /* <button> */
 .extra-network-tree .tree-list-content {
@@ -1333,8 +1322,7 @@ body.resizing .resize-handle {
     padding: 0 !important;
     margin-top: 0 !important;
     margin-bottom: 0 !important;
-    font-size: 1rem;
-    text-align: left;
+    font-size: 1em;
     user-select: none;
     background-color: transparent;
     border: none;
@@ -1342,31 +1330,18 @@ body.resizing .resize-handle {
     grid-template-rows: min-content;
     grid-template-areas: "leading-action leading-visual label trailing-visual trailing-action";
     grid-template-columns: min-content min-content minmax(0, auto) min-content min-content;
-    grid-gap: 0.1rem;
-    align-items: start;
+    grid-gap: 0.1em;
+    place-items: center stretch;
+    text-align: center;
     flex-grow: 1;
     flex-basis: 100%;
 }
-/* Buttons for directories. */
-.extra-network-tree .tree-list-content-dir {}   
 
 /* Buttons for files. */
-.extra-network-tree .tree-list-item--has-subitem .tree-list--subgroup > li:first-child {
-    padding-top: 0.5rem !important;
-}
-
 .dark .extra-network-tree div.tree-list-content:hover {
     -webkit-transition: all 0.05s ease-in-out;
 	transition: all 0.05s ease-in-out;
     background-color: var(--neutral-800);
-}
-
-.dark .extra-network-tree div.tree-list-content[data-selected] {
-    background-color: var(--neutral-700);
-}
-
-.extra-network-tree div.tree-list-content[data-selected] {
-    background-color: var(--neutral-300);
 }
 
 .extra-network-tree div.tree-list-content:hover {
@@ -1375,29 +1350,43 @@ body.resizing .resize-handle {
     background-color: var(--neutral-200);
 }
 
+.dark .extra-network-tree .tree-list-item[data-selected] {
+    background-color: var(--neutral-700);
+}
+
+.extra-network-tree .tree-list-item[data-selected] {
+    background-color: var(--neutral-300);
+}
+
+.tree-list-item {
+    position: relative;
+    background-color: transparent;
+    margin: 0;
+    padding: 0;
+}
+
 /* ==== CHEVRON ICON ACTIONS ==== */
 /* Define the animation for the arrow when it is clicked. */
-.extra-network-tree .tree-list-content-dir .tree-list-item-action-chevron {
+.tree-list-item-action-chevron {
+    display: inline-flex;
+    height: 1em;
+    width: 1em;
+    mask-image: url('data:image/svg+xml,<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><g id="SVGRepo_bgCarrier" stroke-width="0"></g><g id="SVGRepo_tracerCarrier" stroke-linecap="round" stroke-linejoin="round"></g><g id="SVGRepo_iconCarrier"><path d="M7 7H17V17" stroke="%23000000" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path></g></svg>');
+    mask-repeat: no-repeat;
+    mask-position: center center;
+    mask-size: 100%;
+    background-color: var(--input-placeholder-color);
+    transform: rotate(45deg);
+}
+
+.tree-list-item[data-expanded] .tree-list-item-action-chevron {
     -ms-transform: rotate(135deg);
     -webkit-transform: rotate(135deg);
     transform: rotate(135deg);
-    transition: transform 0.2s;
+    transition: transform 0.2s; /* currently broken since we remove/add elements to clusterize.js list */
 }
 
-.extra-network-tree .tree-list-content-dir[data-expanded] .tree-list-item-action-chevron {
-    -ms-transform: rotate(225deg);
-    -webkit-transform: rotate(225deg);
-    transform: rotate(225deg);
-    transition: transform 0.2s;
-}
 
-.tree-list-item-action-chevron {
-    display: inline-flex;
-    /* Uses box shadow to generate a pseudo chevron `>` icon. */
-    padding: 0.3rem;
-    box-shadow: 0.1rem 0.1rem 0 0 var(--neutral-200) inset;
-    transform: rotate(135deg);
-}
 
 /* ==== SEARCH INPUT ACTIONS ==== */
 /* Add icon to left side of <input> */
@@ -1553,72 +1542,59 @@ body.resizing .resize-handle {
 
 /* ==== TREE GRID CONFIG ==== */
 
-/* Text for button. */
-.extra-network-tree .tree-list-item-label {
+.tree-list-item-label {
     position: relative;
-    line-height: 1.25rem;
+    line-height: 1.25em;
     color: var(--button-secondary-text-color);
     grid-area: label;
-    padding-left: 0.5rem;
+    padding-left: 0.25em;
+    text-align: start;
 }
 
-/* Text for button truncated. */
-.extra-network-tree .tree-list-item-label--truncate {
+.tree-list-item-label--truncate {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
 }
 
-/* Icon for button. */
-.extra-network-tree .tree-list-item-visual {
-    min-height: 1rem;
+.tree-list-item-visual {
+    min-height: 1em;
     color: var(--button-secondary-text-color);
     pointer-events: none;
     align-items: right;
 }
 
-
-/* Icon for button when it is before label. */
-.extra-network-tree .tree-list-item-visual--leading {
+.tree-list-item-visual--leading {
     grid-area: leading-visual;
-    width: 1rem;
-    text-align: right;
+    width: 1em;
 }
 
-/* Icon for button when it is after label. */
-.extra-network-tree .tree-list-item-visual--trailing {
+.tree-list-item-visual--trailing {
     grid-area: trailing-visual;
-    width: 1rem;
-    text-align: right;
+    width: 1em;
 }
 
-/* Dropdown arrow for button. */
-.extra-network-tree .tree-list-item-action--leading {
-    margin-right: 0.5rem;
-    margin-left: 0.2rem;
-}
+.tree-list-item-action--leading {}
 
-.extra-network-tree .tree-list-content-file .tree-list-item-action--leading {
+.tree-list-content-file .tree-list-item-action--leading {
     visibility: hidden;
 }
 
-.extra-network-tree .tree-list-item-action--leading {
+.tree-list-item-action--leading {
     grid-area: leading-action;
 }
 
-.extra-network-tree .tree-list-item-action--trailing {
+.tree-list-item-action--trailing {
     grid-area: trailing-action;
     display: inline-flex;
 }
 
-.extra-network-tree .tree-list-content .button-row {
+.tree-list-content .button-row {
     display: inline-flex;
     visibility: hidden;
     color: var(--button-secondary-text-color);
-    width: 0;
 }
 
-.extra-network-tree .tree-list-content:hover .button-row {
+.tree-list-content:hover .button-row {
     visibility: visible;
-    width: auto;
 }
