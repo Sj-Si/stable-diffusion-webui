@@ -5,6 +5,12 @@ from pathlib import Path
 from typing import Optional, Union
 from dataclasses import dataclass
 
+import gzip
+import base64
+import random
+from io import StringIO, BytesIO
+import sys
+
 from modules import shared, ui_extra_networks_user_metadata, errors, extra_networks, util
 from modules.images import read_info_from_image, save_image_with_geninfo
 import gradio as gr
@@ -14,6 +20,17 @@ import re
 from fastapi.exceptions import HTTPException
 
 from modules.infotext_utils import image_from_url_text
+
+import math
+
+def convert_size(size_bytes):
+    if size_bytes == 0:
+        return "0B"
+    size_name = ("B", "KB", "MB", "GB", "TB", "PB", "EB", "ZB", "YB")
+    i = int(math.floor(math.log(size_bytes, 1024)))
+    p = math.pow(1024, i)
+    s = round(size_bytes / p, 2)
+    return f"{s} {size_name[i]}"
 
 extra_pages = []
 allowed_dirs = set()
@@ -315,8 +332,8 @@ def build_tree(
                 data_depth=depth,
                 data_path=v.item["filename"],
                 data_hash=v.item["shorthash"],
-                data_prompt=v.item.get("prompt", "''"),
-                data_neg_prompt=v.item.get("negative_prompt", "''"),
+                data_prompt=html.escape(v.item.get("prompt", "''")),
+                data_neg_prompt=html.escape(v.item.get("negative_prompt", "''")),
                 data_allow_neg=str(allow_negative_prompt).lower(),
                 onclick_extra=onclick,
                 btn_type="file",
@@ -327,6 +344,23 @@ def build_tree(
             )
         div_id += 1
     return div_id
+
+def compressStringToBytes(inputString):
+    """
+    read the given string, encode it in utf-8,
+    compress the data and return it as a byte array.
+    """
+    bio = BytesIO()
+    bio.write(inputString.encode("utf-8"))
+    bio.seek(0)
+    stream = BytesIO()
+    compressor = gzip.GzipFile(fileobj=stream, mode='w')
+    while True:  # until EOF
+        chunk = bio.read(8192)
+        if not chunk:  # EOF?
+            compressor.close()
+            return stream.getvalue()
+        compressor.write(chunk)
 
 class ExtraNetworksPage:
     def __init__(self, title):
@@ -499,7 +533,7 @@ class ExtraNetworksPage:
         else:
             return args
 
-    def create_tree_view_html(self, tabname: str) -> dict:
+    def create_tree_view_html(self, tabname: str) -> str:
         """Generates HTML for displaying folders in a tree view.
 
         Args:
@@ -533,11 +567,13 @@ class ExtraNetworksPage:
             tree_row_tpl=self.tree_row_tpl,
         )
         # FIXME: Temporary solution. Need to somehow send this data directly in future.
-        out_file = os.path.join("./tmpdir", f"{tabname}_{self.extra_networks_tabname}_tree_list.json")
-        with open(out_file, "w", encoding="utf8") as f_out:
-            json.dump(res, f_out)
+        #out_file = os.path.join("./tmpdir", f"{tabname}_{self.extra_networks_tabname}_tree_list.json")
+        #with open(out_file, "w", encoding="utf8") as f_out:
+        #    json.dump(res, f_out)
+        res = base64.b64encode(gzip.compress(json.dumps(res).encode("utf-8"))).decode("utf-8")
+        return f'<div class="extra-networks-script-data" data-proxy-name={tabname}_{self.extra_networks_tabname}_tree_view data-json={res} hidden></div>'
 
-    def create_card_view_html(self, tabname: str, *, none_message) -> dict[str, str]:
+    def create_card_view_html(self, tabname: str, *, none_message) -> str:#dict[str, str]:
         """Generates HTML for the network Card View section for a tab.
 
         This HTML goes into the `extra-networks-pane.html` <div> with
@@ -558,11 +594,15 @@ class ExtraNetworksPage:
             dirs = "".join([f"<li>{x}</li>" for x in self.allowed_directories_for_previews()])
             res = none_message or shared.html("extra-networks-no-cards.html").format(dirs=dirs)
         """
-        out_file = os.path.join("./tmpdir", f"{tabname}_{self.extra_networks_tabname}_cards_list.json")
-        with open(out_file, "w", encoding="utf8") as f_out:
-            json.dump(res, f_out)
-
-        return res
+        #out_file = os.path.join("./tmpdir", f"{tabname}_{self.extra_networks_tabname}_cards_list.json")
+        #with open(out_file, "w", encoding="utf8") as f_out:
+        #    json.dump(res, f_out)
+        res = base64.b64encode(gzip.compress(json.dumps(res).encode("utf-8"))).decode("utf-8")
+        #return f"<script>extra_networks_proxy_listener.{tabname}_{self.extra_networks_tabname}_cards_view = \"{res}\";</script>"
+        #return f"<div class='my-custom-script' hidden data-str=\"{random.randint(0, 10)}\"></div>"
+        #return "<script id='my-custom-script' type='text/javascript'>\nwindow.here_i_am = 123;\n</script>"
+        return f'<div class="extra-networks-script-data" data-proxy-name={tabname}_{self.extra_networks_tabname}_cards_view data-json={res} hidden></div>'
+        #return "<script type='text/javascript'>window.addEventListener('load' function () {console.log('here');});</script>"
 
     def create_html(self, tabname, *, empty=False):
         """Generates an HTML string for the current pane.
@@ -591,9 +631,8 @@ class ExtraNetworksPage:
             if "user_metadata" not in item:
                 self.read_user_metadata(item)
 
-        data_sortdir = shared.opts.extra_networks_card_order
-        data_sortmode = shared.opts.extra_networks_card_order_field.lower().replace("sort", "").replace(" ", "_").rstrip("_").strip()
-        data_sortkey = f"{data_sortmode}-{data_sortdir}-{len(self.items)}"
+        data_sort_dir = shared.opts.extra_networks_card_order.lower().strip()
+        data_sort_mode = shared.opts.extra_networks_card_order_field.lower().strip()
         tree_view_btn_extra_class = ""
         tree_view_div_extra_class = "hidden"
         tree_view_div_default_display = "none"
@@ -608,13 +647,12 @@ class ExtraNetworksPage:
             **{
                 "tabname": tabname,
                 "extra_networks_tabname": self.extra_networks_tabname,
-                "data_sortmode": data_sortmode,
-                "data_sortkey": data_sortkey,
-                "data_sortdir": data_sortdir,
+                "data_sort_mode": data_sort_mode,
+                "data_sort_dir": data_sort_dir,
                 "tree_view_btn_extra_class": tree_view_btn_extra_class,
                 "tree_view_div_extra_class": tree_view_div_extra_class,
                 "tree_html": self.create_tree_view_html(tabname),
-                "items_html": self.create_card_view_html(tabname, none_message="Loading..." if empty else None),
+                "cards_html": self.create_card_view_html(tabname, none_message="Loading..." if empty else None),
                 "extra_networks_tree_view_default_width": shared.opts.extra_networks_tree_view_default_width,
                 "tree_view_div_default_display": tree_view_div_default_display,
                 "extra_network_pane_content_default_display": extra_network_pane_content_default_display,
@@ -735,7 +773,7 @@ def create_ui(interface: gr.Blocks, unrelated_tabs, tabname):
             with gr.Column(elem_id=f"{tabname}_{page.extra_networks_tabname}_prompts", elem_classes=["extra-page-prompts"]):
                 pass
 
-            elem_id = f"{tabname}_{page.extra_networks_tabname}_cards_html"
+            elem_id = f"{tabname}_{page.extra_networks_tabname}_html"
             page_elem = gr.HTML(page.create_html(tabname, empty=True), elem_id=elem_id)
             ui.pages.append(page_elem)
             editor = page.create_user_metadata_editor(ui, tabname)
@@ -775,7 +813,7 @@ def create_ui(interface: gr.Blocks, unrelated_tabs, tabname):
             create_html()
         return ui.pages_contents
 
-    interface.load(fn=pages_html, inputs=[], outputs=ui.pages).then(fn=lambda: None, _js='setupAllResizeHandles')
+    interface.load(fn=pages_html, inputs=[], outputs=ui.pages).then(fn=lambda: None, _js='setupAllResizeHandles').then(fn=lambda: None, _js="setupExtraNetworksData")
 
     return ui
 

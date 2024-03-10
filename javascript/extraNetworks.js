@@ -17,35 +17,51 @@ function getBoxShadow(depth) {
     return res;
 }
 
+const INT_COLLATOR = new Intl.Collator([], {numeric: true});
+const STR_COLLATOR = new Intl.Collator("en", {numeric: true, sensitivity: "base"});
+
+const compress = string => {
+    const cs = new CompressionStream('gzip');
+    const writer = cs.writable.getWriter();
+
+    const blobToBase64 = blob => new Promise((resolve, _) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(reader.result.split(',')[1]);
+        reader.readAsDataURL(blob);
+    });
+    const byteArray = new TextEncoder().encode(string);
+    writer.write(byteArray);
+    writer.close();
+    return new Response(cs.readable).blob().then(blobToBase64);
+};
+
+const decompress = base64string => {
+    const ds = new DecompressionStream('gzip');
+    const writer = ds.writable.getWriter();
+    const bytes = Uint8Array.from(atob(base64string), c => c.charCodeAt(0));
+    writer.write(bytes);
+    writer.close();
+    return new Response(ds.readable).arrayBuffer().then(function (arrayBuffer) {
+        return new TextDecoder().decode(arrayBuffer);
+    });
+}
+
 class ExtraNetworksClusterize {
     constructor(
         {
-            data_json_path,
             scroll_id,
             content_id,
-            done_fn,
             rows_in_block = 10,
             blocks_in_cluster = 4,
             show_no_data_row = true,
-            callbacks = {
-                clusterWillChange: this.clusterWillChange,
-                clusterChanged: this.clusterChanged,
-                scrollingProgress: this.scrollingProgress,
-            },
+            callbacks = {},
         } = {
             rows_in_block: 10,
             blocks_in_cluster: 4,
             show_no_data_row: true,
-            callbacks: {
-                clusterWillChange: this.clusterWillChange,
-                clusterChanged: this.clusterChanged,
-                scrollingProgress: this.scrollingProgress,
-            },
+            callbacks: {},
         }
     ) {
-        if (data_json_path === undefined) {
-            console.error("data_json_path is undefined!");
-        }
         if (scroll_id === undefined) {
             console.error("scroll_id is undefined!");
         }
@@ -53,19 +69,18 @@ class ExtraNetworksClusterize {
             console.error("content_id is undefined!");
         }
 
-        this.data_json_path = data_json_path;
         this.scroll_id = scroll_id;
         this.content_id = content_id;
-        this.done_fn = done_fn;
         this.rows_in_block = rows_in_block;
         this.blocks_in_cluster = blocks_in_cluster;
         this.show_no_data_row = show_no_data_row;
-        this.callbacks = {};//callbacks;
-
-        this.sort_fn = this.sort_by_id; // default sort by div_id
-        this.sort_asc = true; // default 0->9, A->Z
+        this.callbacks = callbacks;
+        
+        this.sort_fn = this.sort_by_div_id;
+        this.sort_reverse = false;
 
         this.data_obj = {};
+        this.data_obj_keys_sorted = [];
 
         this.clusterize = new Clusterize(
             {
@@ -80,33 +95,22 @@ class ExtraNetworksClusterize {
         );
     }
 
-    clusterWillChange() {
-        console.log("clusterWillChange");
-    }
-    
-    clusterChanged() {
-        console.log("clusterChanged");
-    }
-    
-    scrollingProgress(p) {
-        console.log("scrollingProgress:", p);
+    sort_by_div_id() {
+        // Sort data_obj keys (div_id) as numbers.
+        this.data_obj_keys_sorted = Object.keys(this.data_obj).sort((a, b) => INT_COLLATOR.compare(a, b));
     }
 
-    sort_by_id(obj) {
-        const collator = new Intl.Collator([], {numeric: true});
-        var res = Object.keys(obj).sort((a, b) => collator.compare(a, b));
-        return this.sort_asc ? res : res.reverse();
-    }
-
-    sort_by_name(obj) {
-        const collator = new Intl.Collator("en", {numeric: true, sensitivity: "base"});
-        var res = Object.keys(obj).sort((a, b) => collator.compare(a, b));
-        return this.sort_asc ? res : res.reverse();
+    apply_sort() {
+        this.sort_fn()
+        if (this.sort_reverse) {
+            this.data_obj_keys_sorted = this.data_obj_keys_sorted.reverse();
+        }
+        this.update_rows();
     }
 
     filter_rows(obj) {
         var results = [];
-        for (const div_id of this.sort_fn(obj)) {
+        for (const div_id of this.data_obj_keys_sorted) {
             if (obj[div_id].active) {
                 results.push(obj[div_id].element.outerHTML);
             }
@@ -143,7 +147,7 @@ class ExtraNetworksClusterize {
         this.clusterize.destroy();
         this.clusterize = new Clusterize(
             {
-                rows: [],
+                rows: this.filter_rows(this.data_obj),
                 scrollId: this.scroll_id,
                 contentId: this.content_id,
                 rows_in_block: this.rows_in_block,
@@ -152,66 +156,67 @@ class ExtraNetworksClusterize {
                 callbacks: this.callbacks,
             }
         );
-        this.parse_json();
+        this.apply_sort();
     }
 }
 
 class ExtraNetworksClusterizeTreeList extends ExtraNetworksClusterize {
     constructor(...args) {
         super(...args);
-        this.div_id_children = {};
     }
 
-    parse_json() {
-        fetch(this.data_json_path)
-            .then(res => res.json())
-            .then(res => {
-                for (const [k, v] of Object.entries(res)) {
-                    let div_id = k;
-                    let parsed_html = parseHTML(v)[0];
-                    let parent_id = "parentId" in parsed_html.dataset ? parsed_html.dataset.parentId : -1;
-                    let depth = Number(parsed_html.dataset.depth);
-                    parsed_html.style.paddingLeft = `${depth}em`;
-                    parsed_html.style.boxShadow = getBoxShadow(depth);
-                    // Add the updated html to the data object.
-                    this.data_obj[div_id] = {
-                        element: parsed_html,
-                        active: false,
-                        expanded: "expanded" in parsed_html.dataset,
-                        parent: parent_id,
-                        children: [], // populated later
-                    };
-                }
+    update_json(json) {
+        for (const [k, v] of Object.entries(json)) {
+            let div_id = k;
+            let parsed_html = parseHTML(v)[0];
+            // parent_id = -1 if item is at root level
+            let parent_id = "parentId" in parsed_html.dataset ? parsed_html.dataset.parentId : -1;
+            let expanded = "expanded" in parsed_html.dataset;
+            let depth = Number(parsed_html.dataset.depth);
+            parsed_html.style.paddingLeft = `${depth}em`;
+            parsed_html.style.boxShadow = getBoxShadow(depth);
+            // Add the updated html to the data object.
+            this.data_obj[div_id] = {
+                element: parsed_html,
+                active: parent_id === -1, // always show root
+                expanded: expanded || (parent_id === -1), // always expand root
+                parent: parent_id,
+                children: [], // populated later
+            };
+        }
 
-                // Build list of children for each element in dataset.
-                for (const [k, v] of Object.entries(this.data_obj)) {
-                    if (v.parent === -1) {
-                        continue;
-                    } else if (!(v.parent in this.data_obj)) {
-                        console.error("parent not in data:", v.parent);
-                    } else {
-                        this.data_obj[v.parent].children.push(k);
-                    }
-                }
+        // Build list of children for each element in dataset.
+        for (const [k, v] of Object.entries(this.data_obj)) {
+            if (v.parent === -1) {
+                continue;
+            } else if (!(v.parent in this.data_obj)) {
+                console.error("parent not in data:", v.parent);
+            } else {
+                this.data_obj[v.parent].children.push(k);
+            }
+        }
 
-                // Handle expanding of rows on initial load
-                for (const [k, v] of Object.entries(this.data_obj)) {
-                    if (!(v.parent in this.data_obj) && v.expanded) {
-                        this.data_obj[k].active = true;
-                    } else if (v.parent !== -1 && this.data_obj[v.parent].expanded && this.data_obj[v.parent].active) {
-                        this.data_obj[k].active = true;
-                    }
-                }
+        // Handle expanding of rows on initial load
+        for (const [k, v] of Object.entries(this.data_obj)) {
+            if (v.parent === -1) {
+                // Always show root level.
+                this.data_obj[k].active = true;
+            } else if (this.data_obj[v.parent].expanded && this.data_obj[v.parent].active) {
+                // Parent is both active and expanded. show child
+                this.data_obj[k].active = true;
+            } else {
+                this.data_obj[k].active = false;
+            }
+        }
 
-                this.update_rows();
-                this.done_fn(this);
-            })
-            .catch((error) => console.error("Error parsing data JSON:", this.data_json_path, error));
+        this.apply_sort();
     }
 
     remove_child_rows(div_id) {
         for (const child_id of this.data_obj[div_id].children) {
             this.data_obj[child_id].active = false;
+            this.data_obj[child_id].expanded = false;
+            delete this.data_obj[child_id].element.dataset.expanded;
             this.remove_child_rows(child_id);
         }
     }
@@ -219,7 +224,9 @@ class ExtraNetworksClusterizeTreeList extends ExtraNetworksClusterize {
     add_child_rows(div_id) {
         for (const child_id of this.data_obj[div_id].children) {
             this.data_obj[child_id].active = true;
-            this.add_child_rows(child_id);
+            if (this.data_obj[child_id].expanded) {
+                this.add_child_rows(child_id);
+            }
         }
     }
 }
@@ -227,65 +234,113 @@ class ExtraNetworksClusterizeTreeList extends ExtraNetworksClusterize {
 class ExtraNetworksClusterizeCardsList extends ExtraNetworksClusterize {
     constructor(...args) {
         super(...args);
+
+        this.sort_mode_str = "default";
+        this.sort_dir_str = "ascending";
+        this.filter_str = "";
     }
 
-    parse_json() {
-        fetch(this.data_json_path)
-            .then(res => res.json())
-            .then(res => {
-                for (const [k, v] of Object.entries(res)) {
-                    let div_id = k;
-                    let parsed_html = parseHTML(v)[0];
-                    // Add the updated html to the data object.
-                    this.data_obj[div_id] = {
-                        element: parsed_html,
-                        active: true,
-                    };
-                }
+    update_json(json) {
+        for (const [k, v] of Object.entries(json)) {
+            let div_id = k;
+            let parsed_html = parseHTML(v)[0];
+            // Add the updated html to the data object.
+            this.data_obj[div_id] = {
+                element: parsed_html,
+                active: true,
+            };
+        }
 
-                this.update_rows();
-                this.done_fn(this);
-            })
-            .catch((error) => console.error("Error parsing data JSON:", this.data_json_path, error));
+        this.apply_sort();
     }
 
-    filter(search_str) {
-        search_str = search_str.toLowerCase();
+    sort_by_name() {
+        this.data_obj_keys_sorted = Object.keys(this.data_obj).sort((a, b) => {
+            return STR_COLLATOR.compare(
+                this.data_obj[a].element.dataset.sortName,
+                this.data_obj[b].element.dataset.sortName,
+            );
+        });
+    }
+
+    sort_by_path() {
+        this.data_obj_keys_sorted = Object.keys(this.data_obj).sort((a, b) => {
+            return STR_COLLATOR.compare(
+                this.data_obj[a].element.dataset.sortPath,
+                this.data_obj[b].element.dataset.sortPath,
+            );
+        });
+    }
+
+    sort_by_created() {
+        this.data_obj_keys_sorted = Object.keys(this.data_obj).sort((a, b) => {
+            return INT_COLLATOR.compare(
+                this.data_obj[a].element.dataset.sortCreated,
+                this.data_obj[b].element.dataset.sortCreated,
+            );
+        });
+    }
+
+    sort_by_modified() {
+        this.data_obj_keys_sorted = Object.keys(this.data_obj).sort((a, b) => {
+            return INT_COLLATOR.compare(
+                this.data_obj[a].element.dataset.sortModified,
+                this.data_obj[b].element.dataset.sortModified,
+            );
+        });
+    }
+
+    set_sort_mode(btn_sort_mode) {
+        this.sort_mode_str = btn_sort_mode.dataset.sortMode.toLowerCase();
+    }
+
+    set_sort_dir(btn_sort_dir) {
+        this.sort_dir_str = btn_sort_dir.dataset.sortDir.toLowerCase();
+    }
+
+    apply_sort() {
+        this.sort_reverse = this.sort_dir_str === "descending";
+
+        switch(this.sort_mode_str) {
+            case "name":
+                this.sort_fn = this.sort_by_name;
+                break;
+            case "path":
+                this.sort_fn = this.sort_by_path;
+                break;
+            case "created":
+                this.sort_fn = this.sort_by_created;
+                break;
+            case "modified":
+                this.sort_fn = this.sort_by_modified;
+                break;
+            default:
+                this.sort_fn = this.sort_by_div_id;
+                break;
+        }
+        super.apply_sort();
+    }
+
+    apply_filter(filter_str) {
+        if (filter_str !== undefined) {
+            this.filter_str = filter_str.toLowerCase();
+        }
+        
         for (const [k, v] of Object.entries(this.data_obj)) {
             let search_only = v.element.querySelector(".search_only");
             let text = Array.prototype.map.call(v.element.querySelectorAll(".search_terms"), function(t) {
                 return t.textContent.toLowerCase();
             }).join(" ");
 
-            let visible = text.indexOf(search_str) != -1;
-            if (search_only && search_str.length < 4) {
+            let visible = text.indexOf(this.filter_str) != -1;
+            if (search_only && this.filter_str.length < 4) {
                 visible = false;
             }
             this.data_obj[k].active = visible;
-            if (!this.update_div(k, v.element)) {
-                console.error("error updating div:", k, v);
-            }
         }
 
+        this.apply_sort();
         this.update_rows();
-    }
-
-    sort(order, mode_str, mode_key, force) {
-        let reverse = order == "Descending";
-        let key = mode_str.toLowerCase().replace("sort", "").replaceAll(" ", "_").replace(/_+$/, "").trim() || "name";
-        key = "sort" + key.charAt(0).toUpperCase() + key.slice(1);
-        let key_store = key + "-" + (reverse ? "Descending" : "Ascending") + "-" + Object.keys(this.data_obj).length;
-        
-        if (key_store == mode_key && !force) {
-            return;
-        }
-
-        let div_ids_sorted = Array.from(Object.keys(this.data_obj));
-        div_ids_sorted.sort(function(a, b) {
-            
-        })
-        
-        return key_store;
     }
 }
 
@@ -325,13 +380,62 @@ function toggleCss(key, css, enable) {
     }
 }
 
+function setup_proxy_listener(target, pre_handler, post_handler) {
+    var proxy = new Proxy(target, {
+        set: function (t, k, v) {
+            pre_handler.call(t, k, v);
+            t[k] = v;
+            post_handler.call(t, k, v);
+            return true;
+        }
+    });
+    return proxy
+}
+
+function on_json_will_update(k, v) {
+    // use `this` for current object
+}
+
+function on_json_updated(k, v) {
+    // use `this` for current object
+    // We don't do error handling here because 
+    if (k.endsWith("_tree_view")) {
+        let _k = k.slice(0, -("_tree_view").length);
+        if (!(_k in clusterizers) || !("tree_list" in clusterizers[_k])) {
+            return;
+        }
+        Promise.resolve(v)
+            .then(_v => decompress(_v))
+            .then(_v => JSON.parse(_v))
+            .then(_v => clusterizers[_k].tree_list.update_json(_v));
+    } else if (k.endsWith("_cards_view")) {
+        let _k = k.slice(0, -("_cards_view").length);
+        if (!(_k in clusterizers) || !("cards_list" in clusterizers[_k])) {
+            return;
+        }
+        Promise.resolve(v)
+            .then(_v => decompress(_v))
+            .then(_v => JSON.parse(_v))
+            .then(_v => clusterizers[_k].cards_list.update_json(_v));
+    } else {
+        console.error("Unknown key in json listener object:", k, v);
+    }
+}
+
+const extra_networks_json_proxy = {};
+const extra_networks_proxy_listener = setup_proxy_listener(
+    extra_networks_json_proxy,
+    on_json_will_update,
+    on_json_updated,
+);
+
 function clusterize_setup_done(clusterize) {
 }
 
 const clusterizers = {};
 function setupExtraNetworksForTab(tabname) {
     function registerPrompt(tabname, id) {
-        var textarea = gradioApp().querySelector("#" + id + " > label > textarea");
+        var textarea = gradioApp().querySelector(`#${id} > label > textarea`);
 
         if (!activePromptTextarea[tabname]) {
             activePromptTextarea[tabname] = textarea;
@@ -342,23 +446,22 @@ function setupExtraNetworksForTab(tabname) {
         });
     }
 
-    var tabnav = gradioApp().querySelector('#' + tabname + '_extra_tabs > div.tab-nav');
+    var tabnav = gradioApp().querySelector(`#${tabname}_extra_tabs > div.tab-nav`);
     var controlsDiv = document.createElement('DIV');
     controlsDiv.classList.add('extra-networks-controls-div');
     tabnav.appendChild(controlsDiv);
     tabnav.insertBefore(controlsDiv, null);
 
-    var this_tab = gradioApp().querySelector('#' + tabname + '_extra_tabs');
-    this_tab.querySelectorAll(":scope > [id^='" + tabname + "_']").forEach(function(elem) {
-        // tabname_full = {tabname}_{extra_networks_tabname}
-        var tabname_full = elem.id;
-        var search = gradioApp().querySelector("#" + tabname_full + "_extra_search");
-        var sort_mode = gradioApp().querySelector("#" + tabname_full + "_extra_sort");
-        var sort_dir = gradioApp().querySelector("#" + tabname_full + "_extra_sort_dir");
-        var refresh = gradioApp().querySelector("#" + tabname_full + "_extra_refresh");
+    var this_tab = gradioApp().querySelector(`#${tabname}_extra_tabs`);
+    this_tab.querySelectorAll(`:scope > [id^="${tabname}_"]`).forEach(function(elem) {
+        let tabname_full = elem.id;
+        let txt_search = gradioApp().querySelector(`#${tabname_full}_extra_search`);
+        let btn_sort_mode = gradioApp().querySelector(`#${tabname_full}_extra_sort_mode`);
+        let btn_sort_dir = gradioApp().querySelector(`#${tabname_full}_extra_sort_dir`);
+        let btn_refresh = gradioApp().querySelector(`#${tabname_full}_extra_refresh`);
 
         // If any of the buttons above don't exist, we want to skip this iteration of the loop.
-        if (!search || !sort_mode || !sort_dir || !refresh) {
+        if (!txt_search || !btn_sort_mode || !btn_sort_dir || !btn_refresh) {
             return; // `return` is equivalent of `continue` but for forEach loops.
         }
 
@@ -369,95 +472,42 @@ function setupExtraNetworksForTab(tabname) {
         // Add a clusterizer for the tree list and for the cards list.
         clusterizers[tabname_full].tree_list = new ExtraNetworksClusterizeTreeList(
             {
-                data_json_path: `./tmpdir/${tabname_full}_tree_list.json`,
                 scroll_id: `${tabname_full}_tree_list_scroll_area`,
                 content_id: `${tabname_full}_tree_list_content_area`,
-                done_fn: clusterize_setup_done,
             }
         );
         clusterizers[tabname_full].cards_list = new ExtraNetworksClusterizeCardsList(
             {
-                data_json_path: `./tmpdir/${tabname_full}_cards_list.json`,
                 scroll_id: `${tabname_full}_cards_list_scroll_area`,
                 content_id: `${tabname_full}_cards_list_content_area`,
-                done_fn: clusterize_setup_done,
             }
         );
 
-        var applyFilter = function(force) {
-            clusterizers[tabname_full].cards_list.filter(search.value);
-            return;
-            var searchTerm = search.value.toLowerCase();
-            gradioApp().querySelectorAll('#' + tabname + '_extra_tabs div.card').forEach(function(elem) {
-                var searchOnly = elem.querySelector('.search_only');
-                var text = Array.prototype.map.call(elem.querySelectorAll('.search_terms'), function(t) {
-                    return t.textContent.toLowerCase();
-                }).join(" ");
-
-                var visible = text.indexOf(searchTerm) != -1;
-                if (searchOnly && searchTerm.length < 4) {
-                    visible = false;
-                }
-                if (visible) {
-                    //elem.classList.remove("hidden");
-                    delete elem.dataset.visible;
-                } else {
-                    //elem.classList.add("hidden");
-                    elem.dataset.visible = "";
-                }
-            });
-
-            applySort(force);
+        var apply_filter = function() {
+            clusterizers[tabname_full].cards_list.set_sort_mode(btn_sort_mode);
+            clusterizers[tabname_full].cards_list.set_sort_dir(btn_sort_dir);
+            clusterizers[tabname_full].cards_list.apply_filter(txt_search.value);
         };
 
-        var applySort = function(force) {
-            var cards = gradioApp().querySelectorAll('#' + tabname + '_extra_tabs div.card');
-            var reverse = sort_dir.dataset.sortdir == "Descending";
-            var sortKey = sort_mode.dataset.sortmode.toLowerCase().replace("sort", "").replaceAll(" ", "_").replace(/_+$/, "").trim() || "name";
-            sortKey = "sort" + sortKey.charAt(0).toUpperCase() + sortKey.slice(1);
-            var sortKeyStore = sortKey + "-" + (reverse ? "Descending" : "Ascending") + "-" + cards.length;
-
-            if (sortKeyStore == sort_mode.dataset.sortkey && !force) {
-                return;
-            }
-            sort_mode.dataset.sortkey = sortKeyStore;
-
-            cards.forEach(function(card) {
-                card.originalParentElement = card.parentElement;
-            });
-            var sortedCards = Array.from(cards);
-            sortedCards.sort(function(cardA, cardB) {
-                var a = cardA.dataset[sortKey];
-                var b = cardB.dataset[sortKey];
-                if (!isNaN(a) && !isNaN(b)) {
-                    return parseInt(a) - parseInt(b);
-                }
-
-                return (a < b ? -1 : (a > b ? 1 : 0));
-            });
-            if (reverse) {
-                sortedCards.reverse();
-            }
-            cards.forEach(function(card) {
-                card.remove();
-            });
-            sortedCards.forEach(function(card) {
-                card.originalParentElement.appendChild(card);
-            });
+        var apply_sort = function() {
+            clusterizers[tabname_full].cards_list.set_sort_mode(btn_sort_mode);
+            clusterizers[tabname_full].cards_list.set_sort_dir(btn_sort_dir);
+            clusterizers[tabname_full].cards_list.apply_sort();
         };
 
         let typing_timer;
         let done_typing_interval = 500;
-        search.addEventListener("keyup", () => {
+        txt_search.addEventListener("keyup", () => {
             clearTimeout(typing_timer);
-            if (search.value) {
-                typing_timer = setTimeout(applyFilter, done_typing_interval);
+            if (txt_search.value) {
+                typing_timer = setTimeout(apply_filter, done_typing_interval);
             }
         });
-        applySort();
-        applyFilter();
-        extraNetworksApplySort[tabname_full] = applySort;
-        extraNetworksApplyFilter[tabname_full] = applyFilter;
+
+        apply_filter(); // also sorts
+
+        extraNetworksApplySort[tabname_full] = apply_sort;
+        extraNetworksApplyFilter[tabname_full] = apply_filter;
 
         var controls = gradioApp().querySelector("#" + tabname_full + "_controls");
         controlsDiv.insertBefore(controls, null);
@@ -522,20 +572,22 @@ function extraNetworksTabSelected(tabname, id, showPrompt, showNegativePrompt, t
 
 function applyExtraNetworkFilter(tabname_full) {
     var doFilter = function() {
-        var applyFunction = extraNetworksApplyFilter[tabname_full];
-
-        if (applyFunction) {
-            applyFunction(true);
-        }
+        extraNetworksApplyFilter[tabname_full]();
     };
     setTimeout(doFilter, 1);
 }
 
 function applyExtraNetworkSort(tabname_full) {
     var doSort = function() {
-        extraNetworksApplySort[tabname_full](true);
+        extraNetworksApplySort[tabname_full]();
     };
     setTimeout(doSort, 1);
+}
+
+function setupExtraNetworksData() {
+    for (var elem of gradioApp().querySelectorAll('.extra-networks-script-data')) {
+        extra_networks_proxy_listener[elem.dataset.proxyName] = elem.dataset.json;
+    }
 }
 
 var extraNetworksApplyFilter = {};
@@ -738,7 +790,7 @@ function extraNetworksTreeOnClick(event, tabname, extra_networks_tabname) {
     event.stopPropagation();
 }
 
-function extraNetworksControlSortOnClick(event, tabname, extra_networks_tabname) {
+function extraNetworksControlSortModeOnClick(event, tabname, extra_networks_tabname) {
     /**
      * Handles `onclick` events for the Sort Mode button.
      *
@@ -749,27 +801,25 @@ function extraNetworksControlSortOnClick(event, tabname, extra_networks_tabname)
      * @param tabname                   The name of the active tab in the sd webui. Ex: txt2img, img2img, etc.
      * @param extra_networks_tabname    The id of the active extraNetworks tab. Ex: lora, checkpoints, etc.
      */
-    var curr_mode = event.currentTarget.dataset.sortmode;
-    var el_sort_dir = gradioApp().querySelector("#" + tabname + "_" + extra_networks_tabname + "_extra_sort_dir");
-    var sort_dir = el_sort_dir.dataset.sortdir;
-    if (curr_mode == "path") {
-        event.currentTarget.dataset.sortmode = "name";
-        event.currentTarget.dataset.sortkey = "sortName-" + sort_dir + "-640";
-        event.currentTarget.setAttribute("title", "Sort by filename");
-    } else if (curr_mode == "name") {
-        event.currentTarget.dataset.sortmode = "date_created";
-        event.currentTarget.dataset.sortkey = "sortDate_created-" + sort_dir + "-640";
-        event.currentTarget.setAttribute("title", "Sort by date created");
-    } else if (curr_mode == "date_created") {
-        event.currentTarget.dataset.sortmode = "date_modified";
-        event.currentTarget.dataset.sortkey = "sortDate_modified-" + sort_dir + "-640";
-        event.currentTarget.setAttribute("title", "Sort by date modified");
-    } else {
-        event.currentTarget.dataset.sortmode = "path";
-        event.currentTarget.dataset.sortkey = "sortPath-" + sort_dir + "-640";
-        event.currentTarget.setAttribute("title", "Sort by path");
+    switch(event.currentTarget.dataset.sortMode) {
+        case "path":
+            event.currentTarget.dataset.sortMode = "name";
+            event.currentTarget.setAttribute("title", "Sort by filename");
+            break;
+        case "name":
+            event.currentTarget.dataset.sortMode = "date_created";
+            event.currentTarget.setAttribute("title", "Sort by date created");
+            break;
+        case "date_created":
+            event.currentTarget.dataset.sortMode = "date_modified";
+            event.currentTarget.setAttribute("title", "Sort by date modified");
+            break;
+        default: // date_modified and all others
+            event.currentTarget.dataset.sortMode = "path";
+            event.currentTarget.setAttribute("title", "Sort by path");
+            break;
     }
-    applyExtraNetworkSort(tabname + "_" + extra_networks_tabname);
+    applyExtraNetworkSort(`${tabname}_${extra_networks_tabname}`);
 }
 
 function extraNetworksControlSortDirOnClick(event, tabname, extra_networks_tabname) {
@@ -783,14 +833,14 @@ function extraNetworksControlSortDirOnClick(event, tabname, extra_networks_tabna
      * @param tabname                   The name of the active tab in the sd webui. Ex: txt2img, img2img, etc.
      * @param extra_networks_tabname    The id of the active extraNetworks tab. Ex: lora, checkpoints, etc.
      */
-    if (event.currentTarget.dataset.sortdir == "Ascending") {
-        event.currentTarget.dataset.sortdir = "Descending";
+    if (event.currentTarget.dataset.sortDir.toLowerCase() == "ascending") {
+        event.currentTarget.dataset.sortDir = "descending";
         event.currentTarget.setAttribute("title", "Sort descending");
     } else {
-        event.currentTarget.dataset.sortdir = "Ascending";
+        event.currentTarget.dataset.sortDir = "ascending";
         event.currentTarget.setAttribute("title", "Sort ascending");
     }
-    applyExtraNetworkSort(tabname + "_" + extra_networks_tabname);
+    applyExtraNetworkSort(`${tabname}_${extra_networks_tabname}`);
 }
 
 function extraNetworksControlTreeViewOnClick(event, tabname, extra_networks_tabname) {
