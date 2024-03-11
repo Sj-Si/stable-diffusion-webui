@@ -17,6 +17,52 @@ function getBoxShadow(depth) {
     return res;
 }
 
+const getComputedValue = function(container, css_property) {
+    return parseInt(
+        window.getComputedStyle(container, null)
+            .getPropertyValue(css_property)
+            .split("px")[0]
+    );
+};
+
+function calc_columns_per_row(parent) {
+    // Returns the number of columns in a row of a flexbox.
+    //const parent = document.querySelector(selector);
+    const parent_width = getComputedValue(parent, "width");
+    const parent_padding_left = getComputedValue(parent,"padding-left");
+    const parent_padding_right = getComputedValue(parent,"padding-right");
+
+    const child = parent.firstElementChild;
+    const child_width = getComputedValue(child,"width");
+    const child_margin_left = getComputedValue(child,"margin-left");
+    const child_margin_right = getComputedValue(child,"margin-right");
+
+    var parent_width_no_padding = parent_width - parent_padding_left - parent_padding_right;
+    const child_width_with_margin = child_width + child_margin_left + child_margin_right;
+    parent_width_no_padding += child_margin_left + child_margin_right;
+
+    return parseInt(parent_width_no_padding / child_width_with_margin);
+}
+
+function calc_rows_per_column(container, parent) {
+    // Returns the number of columns in a row of a flexbox.
+    //const parent = document.querySelector(selector);
+    const parent_height = getComputedValue(container, "height");
+    const parent_padding_top = getComputedValue(container,"padding-top");
+    const parent_padding_bottom = getComputedValue(container,"padding-bottom");
+
+    const child = parent.firstElementChild;
+    const child_height = getComputedValue(child,"height");
+    const child_margin_top = getComputedValue(child,"margin-top");
+    const child_margin_bottom = getComputedValue(child,"margin-bottom");
+
+    var parent_height_no_padding = parent_height - parent_padding_top - parent_padding_bottom;
+    const child_height_with_margin = child_height + child_margin_top + child_margin_bottom;
+    parent_height_no_padding += child_margin_top + child_margin_bottom;
+
+    return parseInt(parent_height_no_padding / child_height_with_margin);
+}
+
 const INT_COLLATOR = new Intl.Collator([], {numeric: true});
 const STR_COLLATOR = new Intl.Collator("en", {numeric: true, sensitivity: "base"});
 
@@ -72,9 +118,22 @@ class ExtraNetworksClusterize {
         this.scroll_id = scroll_id;
         this.content_id = content_id;
         this.rows_in_block = rows_in_block;
+        this.default_rows_in_block = rows_in_block;
+        this.default_blocks_in_cluster = blocks_in_cluster;
         this.blocks_in_cluster = blocks_in_cluster;
         this.show_no_data_row = show_no_data_row;
         this.callbacks = callbacks;
+
+        this.active = false;
+
+        this.no_data_text = "Directory is empty.";
+        this.no_data_class = "nocards";
+
+        this.scroll_elem = document.getElementById(this.scroll_id);
+        this.content_elem = document.getElementById(this.content_id);
+
+        this.n_rows = 1;
+        this.n_cols = 1;
         
         this.sort_fn = this.sort_by_div_id;
         this.sort_reverse = false;
@@ -143,7 +202,31 @@ class ExtraNetworksClusterize {
         return this.clusterize.getRowsAmount();
     }
 
+    update_item_dims() {
+        if (!this.active) {
+            return;
+        }
+        // Calculate the visible rows and colums for the clusterize-content area.
+        var content_elem = document.getElementById(this.content_elem.id);
+        let n_cols = calc_columns_per_row(content_elem);
+        let n_rows = calc_rows_per_column(content_elem.parentElement, content_elem);
+        
+        n_cols = isNaN(n_cols) || n_cols <= 0 ? 1 : n_cols;
+        n_rows = isNaN(n_rows) || n_rows <= 0 ? 1 : n_rows;
+
+        if (n_cols != this.n_cols || n_rows != this.n_rows) {
+            console.log(`Updating size: cols: ${this.n_cols} -> ${n_cols}, rows: ${this.n_rows} -> ${n_rows}, rows_in_block: ${this.rows_in_block} -> ${n_rows * 3}`);
+
+            this.n_cols = n_cols;
+            this.n_rows = n_rows;
+            this.rows_in_block = this.n_rows;
+            
+            this.rebuild();
+        }
+    }
+
     rebuild() {
+        this.active = true;
         this.clusterize.destroy();
         this.clusterize = new Clusterize(
             {
@@ -153,6 +236,8 @@ class ExtraNetworksClusterize {
                 rows_in_block: this.rows_in_block,
                 blocks_in_cluster: this.blocks_in_cluster,
                 show_no_data_row: this.show_no_data_row,
+                no_data_text: this.no_data_text,
+                no_data_class: this.no_data_class,
                 callbacks: this.callbacks,
             }
         );
@@ -252,6 +337,15 @@ class ExtraNetworksClusterizeCardsList extends ExtraNetworksClusterize {
         }
 
         this.apply_sort();
+    }
+
+    filter_rows(obj) {
+        let filtered_rows = super.filter_rows(obj);
+        let res = [];
+        for (let i = 0; i < filtered_rows.length; i += this.n_cols) {
+            res.push(filtered_rows.slice(i, i + this.n_cols).join(""));
+        }
+        return res;
     }
 
     sort_by_name() {
@@ -483,6 +577,16 @@ function setupExtraNetworksForTab(tabname) {
             }
         );
 
+
+        var resize_timer;
+        window.addEventListener('resize', () => {
+            clearTimeout(resize_timer);
+            resize_timer = setTimeout(function() {
+                clusterizers[tabname_full].tree_list.update_item_dims();
+                clusterizers[tabname_full].cards_list.update_item_dims();
+            }, 1000); // 100ms
+        });
+
         var apply_filter = function() {
             clusterizers[tabname_full].cards_list.set_sort_mode(btn_sort_mode);
             clusterizers[tabname_full].cards_list.set_sort_dir(btn_sort_dir);
@@ -562,10 +666,25 @@ function extraNetworksUnrelatedTabSelected(tabname) { // called from python when
     console.log("extraNetworksUnrelatedTabSelected:", tabname);
 }
 
+var extra_networks_resize_handle_fns = {};
 function extraNetworksTabSelected(tabname, id, showPrompt, showNegativePrompt, tabname_full) { // called from python when user selects an extra networks tab
     extraNetworksMovePromptToTab(tabname, id, showPrompt, showNegativePrompt);
     extraNetworksShowControlsForPage(tabname, tabname_full);
     console.log("extraNetworksTabSelected:", tabname, id, tabname_full);
+    for (_tabname_full of Object.keys(clusterizers)) {
+        if (_tabname_full !== tabname_full) {
+            clusterizers[_tabname_full].tree_list.active = false;
+            clusterizers[_tabname_full].cards_list.active = false;
+            window.removeEventListener("resizeHandleResized", extra_networks_resize_handle_fns[_tabname_full]);
+        }
+    }
+    function fn(event) {
+        clusterizers[tabname_full].tree_list.update_item_dims();
+        clusterizers[tabname_full].cards_list.update_item_dims();
+        event.stopPropagation();
+    }
+    extra_networks_resize_handle_fns[tabname_full] = fn;
+    window.addEventListener("resizeHandleResized", fn);
     clusterizers[tabname_full].tree_list.rebuild();
     clusterizers[tabname_full].cards_list.rebuild();
 }
@@ -853,7 +972,7 @@ function extraNetworksControlTreeViewOnClick(event, tabname, extra_networks_tabn
      * @param tabname                   The name of the active tab in the sd webui. Ex: txt2img, img2img, etc.
      * @param extra_networks_tabname    The id of the active extraNetworks tab. Ex: lora, checkpoints, etc.
      */
-    const tree = gradioApp().getElementById(tabname + "_" + extra_networks_tabname + "_tree");
+    const tree = gradioApp().getElementById(`${tabname}_${extra_networks_tabname}_tree_list_scroll_area`);
     const parent = tree.parentElement;
     let resizeHandle = parent.querySelector('.resize-handle');
     tree.classList.toggle("hidden");

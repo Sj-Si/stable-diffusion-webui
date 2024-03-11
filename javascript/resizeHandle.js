@@ -48,6 +48,14 @@
             setLeftColGridTemplate(parent, newWidthL);
 
             R.parentWidth = newParentWidth;
+
+            /*
+            R.parent.dispatchEvent(
+                new CustomEvent("resizeHandleResized", {
+                    bubbles: true,
+                }),
+            );
+            */
         }
     }
 
@@ -168,6 +176,12 @@
                 R.tracking = false;
 
                 document.body.classList.remove('resizing');
+
+                R.parent.dispatchEvent(
+                    new CustomEvent("resizeHandleResized", {
+                        bubbles: true,
+                    }),
+                );
             }
         });
     });
