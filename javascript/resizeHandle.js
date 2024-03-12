@@ -48,14 +48,6 @@
             setLeftColGridTemplate(parent, newWidthL);
 
             R.parentWidth = newParentWidth;
-
-            /*
-            R.parent.dispatchEvent(
-                new CustomEvent("resizeHandleResized", {
-                    bubbles: true,
-                }),
-            );
-            */
         }
     }
 
@@ -177,6 +169,7 @@
 
                 document.body.classList.remove('resizing');
 
+                // Fire a custom event at end of resizing.
                 R.parent.dispatchEvent(
                     new CustomEvent("resizeHandleResized", {
                         bubbles: true,

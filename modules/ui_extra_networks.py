@@ -566,14 +566,10 @@ class ExtraNetworksPage:
             btn_metadata_tpl=self.btn_metadata_tpl,
             tree_row_tpl=self.tree_row_tpl,
         )
-        # FIXME: Temporary solution. Need to somehow send this data directly in future.
-        #out_file = os.path.join("./tmpdir", f"{tabname}_{self.extra_networks_tabname}_tree_list.json")
-        #with open(out_file, "w", encoding="utf8") as f_out:
-        #    json.dump(res, f_out)
         res = base64.b64encode(gzip.compress(json.dumps(res).encode("utf-8"))).decode("utf-8")
-        return f'<div class="extra-networks-script-data" data-proxy-name={tabname}_{self.extra_networks_tabname}_tree_view data-json={res} hidden></div>'
+        return f'<div class="extra-networks-script-data" data-tabname-full={tabname}_{self.extra_networks_tabname} data-proxy-name=tree_list data-json={res} hidden></div>'
 
-    def create_card_view_html(self, tabname: str, *, none_message) -> str:#dict[str, str]:
+    def create_card_view_html(self, tabname: str, *, none_message) -> str:
         """Generates HTML for the network Card View section for a tab.
 
         This HTML goes into the `extra-networks-pane.html` <div> with
@@ -589,20 +585,9 @@ class ExtraNetworksPage:
         res = {}
         for i, item in enumerate(self.items.values()):
             res[i] = self.create_item_html(tabname, item, self.card_tpl, div_id=i)
-        """
-        if res == "":
-            dirs = "".join([f"<li>{x}</li>" for x in self.allowed_directories_for_previews()])
-            res = none_message or shared.html("extra-networks-no-cards.html").format(dirs=dirs)
-        """
-        #out_file = os.path.join("./tmpdir", f"{tabname}_{self.extra_networks_tabname}_cards_list.json")
-        #with open(out_file, "w", encoding="utf8") as f_out:
-        #    json.dump(res, f_out)
+
         res = base64.b64encode(gzip.compress(json.dumps(res).encode("utf-8"))).decode("utf-8")
-        #return f"<script>extra_networks_proxy_listener.{tabname}_{self.extra_networks_tabname}_cards_view = \"{res}\";</script>"
-        #return f"<div class='my-custom-script' hidden data-str=\"{random.randint(0, 10)}\"></div>"
-        #return "<script id='my-custom-script' type='text/javascript'>\nwindow.here_i_am = 123;\n</script>"
-        return f'<div class="extra-networks-script-data" data-proxy-name={tabname}_{self.extra_networks_tabname}_cards_view data-json={res} hidden></div>'
-        #return "<script type='text/javascript'>window.addEventListener('load' function () {console.log('here');});</script>"
+        return f'<div class="extra-networks-script-data" data-tabname-full={tabname}_{self.extra_networks_tabname} data-proxy-name=cards_list data-json={res} hidden></div>'
 
     def create_html(self, tabname, *, empty=False):
         """Generates an HTML string for the current pane.
@@ -789,10 +774,10 @@ def create_ui(interface: gr.Blocks, unrelated_tabs, tabname):
 
     for page, tab in zip(ui.stored_extra_pages, related_tabs):
         jscode = (
-            "function(){{"
+            "function(){"
             f"extraNetworksTabSelected('{tabname}', '{tabname}_{page.extra_networks_tabname}_prompts', {str(page.allow_prompt).lower()}, {str(page.allow_negative_prompt).lower()}, '{tabname}_{page.extra_networks_tabname}');"
             f"applyExtraNetworkFilter('{tabname}_{page.extra_networks_tabname}');"
-            "}}"
+            "}"
         )
         tab.select(fn=None, _js=jscode, inputs=[], outputs=[], show_progress=False)
 
@@ -803,7 +788,17 @@ def create_ui(interface: gr.Blocks, unrelated_tabs, tabname):
             return ui.pages_contents
 
         button_refresh = gr.Button("Refresh", elem_id=f"{tabname}_{page.extra_networks_tabname}_extra_refresh_internal", visible=False)
-        button_refresh.click(fn=refresh, inputs=[], outputs=ui.pages).then(fn=lambda: None, _js="function(){ " + f"applyExtraNetworkFilter('{tabname}_{page.extra_networks_tabname}');" + " }").then(fn=lambda: None, _js='setupAllResizeHandles')
+        button_refresh.click(
+            fn=refresh,
+            inputs=[],
+            outputs=ui.pages,
+        ).then(
+            fn=lambda: None,
+            _js="setupAllResizeHandles",
+        ).then(
+            fn=lambda: None,
+            _js=f"function(){{ extraNetworksRefreshTab('{tabname}_{page.extra_networks_tabname}'); }}",
+        )
 
     def create_html():
         ui.pages_contents = [pg.create_html(ui.tabname) for pg in ui.stored_extra_pages]

@@ -1,460 +1,70 @@
-function parseHTML(str) {
-    const tmp = document.implementation.createHTMLDocument('');
-    tmp.body.innerHTML = str;
-    return [...tmp.body.childNodes];
-}
+const re_extranet = /<([^:^>]+:[^:]+):[\d.]+>(.*)/;
+const re_extranet_g = /<([^:^>]+:[^:]+):[\d.]+>/g;
+const re_extranet_neg = /\(([^:^>]+:[\d.]+)\)/;
+const re_extranet_g_neg = /\(([^:^>]+:[\d.]+)\)/g;
+const extraNetworksApplyFilter = {};
+const extraNetworksApplySort = {};
+const activePromptTextarea = {};
+const clusterizers = {};
+const extra_networks_json_proxy = {};
+const extra_networks_proxy_listener = setupProxyListener(
+    extra_networks_json_proxy,
+    function() {},
+    proxyJsonUpdated,
+);
+var globalPopup = null;
+var globalPopupInner = null;
+const storedPopupIds = {};
+const extraPageUserMetadataEditors = {};
+const uiAfterScriptsCallbacks = [];
+var uiAfterScriptsTimeout = null;
+var executedAfterScripts = false;
 
-function getBoxShadow(depth) {
-    let res = "";
-    var style = getComputedStyle(document.body);
-    let bg = style.getPropertyValue("--body-background-fill");
-    let fg = style.getPropertyValue("--neutral-800");
-    for (let i = 1; i <= depth; i++) {
-        res += `${i - 0.6}rem 0 0 ${bg} inset,`;
-        res += `${i - 0.4}rem 0 0 ${fg} inset`;
-        res += (i+1 > depth) ? "" : ", ";
-    }
-    return res;
-}
+function waitForElement(selector) {
+    /** Promise that waits for an element to exist in DOM. */
+    return new Promise(resolve => {
+        if (document.querySelector(selector)) {
+            return resolve(document.querySelector(selector));
+        }
 
-const getComputedValue = function(container, css_property) {
-    return parseInt(
-        window.getComputedStyle(container, null)
-            .getPropertyValue(css_property)
-            .split("px")[0]
-    );
-};
+        const observer = new MutationObserver(mutations => {
+            if (document.querySelector(selector)) {
+                observer.disconnect();
+                resolve(document.querySelector(selector));
+            }
+        });
 
-function calc_columns_per_row(parent) {
-    // Returns the number of columns in a row of a flexbox.
-    //const parent = document.querySelector(selector);
-    const parent_width = getComputedValue(parent, "width");
-    const parent_padding_left = getComputedValue(parent,"padding-left");
-    const parent_padding_right = getComputedValue(parent,"padding-right");
-
-    const child = parent.firstElementChild;
-    const child_width = getComputedValue(child,"width");
-    const child_margin_left = getComputedValue(child,"margin-left");
-    const child_margin_right = getComputedValue(child,"margin-right");
-
-    var parent_width_no_padding = parent_width - parent_padding_left - parent_padding_right;
-    const child_width_with_margin = child_width + child_margin_left + child_margin_right;
-    parent_width_no_padding += child_margin_left + child_margin_right;
-
-    return parseInt(parent_width_no_padding / child_width_with_margin);
-}
-
-function calc_rows_per_column(container, parent) {
-    // Returns the number of columns in a row of a flexbox.
-    //const parent = document.querySelector(selector);
-    const parent_height = getComputedValue(container, "height");
-    const parent_padding_top = getComputedValue(container,"padding-top");
-    const parent_padding_bottom = getComputedValue(container,"padding-bottom");
-
-    const child = parent.firstElementChild;
-    const child_height = getComputedValue(child,"height");
-    const child_margin_top = getComputedValue(child,"margin-top");
-    const child_margin_bottom = getComputedValue(child,"margin-bottom");
-
-    var parent_height_no_padding = parent_height - parent_padding_top - parent_padding_bottom;
-    const child_height_with_margin = child_height + child_margin_top + child_margin_bottom;
-    parent_height_no_padding += child_margin_top + child_margin_bottom;
-
-    return parseInt(parent_height_no_padding / child_height_with_margin);
-}
-
-const INT_COLLATOR = new Intl.Collator([], {numeric: true});
-const STR_COLLATOR = new Intl.Collator("en", {numeric: true, sensitivity: "base"});
-
-const compress = string => {
-    const cs = new CompressionStream('gzip');
-    const writer = cs.writable.getWriter();
-
-    const blobToBase64 = blob => new Promise((resolve, _) => {
-        const reader = new FileReader();
-        reader.onloadend = () => resolve(reader.result.split(',')[1]);
-        reader.readAsDataURL(blob);
-    });
-    const byteArray = new TextEncoder().encode(string);
-    writer.write(byteArray);
-    writer.close();
-    return new Response(cs.readable).blob().then(blobToBase64);
-};
-
-const decompress = base64string => {
-    const ds = new DecompressionStream('gzip');
-    const writer = ds.writable.getWriter();
-    const bytes = Uint8Array.from(atob(base64string), c => c.charCodeAt(0));
-    writer.write(bytes);
-    writer.close();
-    return new Response(ds.readable).arrayBuffer().then(function (arrayBuffer) {
-        return new TextDecoder().decode(arrayBuffer);
+        // If you get "parameter 1 is not of type 'Node'" error, see https://stackoverflow.com/a/77855838/492336
+        observer.observe(document.documentElement, {
+            childList: true,
+            subtree: true
+        });
     });
 }
 
-class ExtraNetworksClusterize {
-    constructor(
-        {
-            scroll_id,
-            content_id,
-            rows_in_block = 10,
-            blocks_in_cluster = 4,
-            show_no_data_row = true,
-            callbacks = {},
-        } = {
-            rows_in_block: 10,
-            blocks_in_cluster: 4,
-            show_no_data_row: true,
-            callbacks: {},
-        }
-    ) {
-        if (scroll_id === undefined) {
-            console.error("scroll_id is undefined!");
-        }
-        if (content_id === undefined) {
-            console.error("content_id is undefined!");
-        }
-
-        this.scroll_id = scroll_id;
-        this.content_id = content_id;
-        this.rows_in_block = rows_in_block;
-        this.default_rows_in_block = rows_in_block;
-        this.default_blocks_in_cluster = blocks_in_cluster;
-        this.blocks_in_cluster = blocks_in_cluster;
-        this.show_no_data_row = show_no_data_row;
-        this.callbacks = callbacks;
-
-        this.active = false;
-
-        this.no_data_text = "Directory is empty.";
-        this.no_data_class = "nocards";
-
-        this.scroll_elem = document.getElementById(this.scroll_id);
-        this.content_elem = document.getElementById(this.content_id);
-
-        this.n_rows = 1;
-        this.n_cols = 1;
-        
-        this.sort_fn = this.sort_by_div_id;
-        this.sort_reverse = false;
-
-        this.data_obj = {};
-        this.data_obj_keys_sorted = [];
-
-        this.clusterize = new Clusterize(
-            {
-                rows: [],
-                scrollId: this.scroll_id,
-                contentId: this.content_id,
-                rows_in_block: this.rows_in_block,
-                blocks_in_cluster: this.blocks_in_cluster,
-                show_no_data_row: this.show_no_data_row,
-                callbacks: this.callbacks,
-            }
-        );
-    }
-
-    sort_by_div_id() {
-        // Sort data_obj keys (div_id) as numbers.
-        this.data_obj_keys_sorted = Object.keys(this.data_obj).sort((a, b) => INT_COLLATOR.compare(a, b));
-    }
-
-    apply_sort() {
-        this.sort_fn()
-        if (this.sort_reverse) {
-            this.data_obj_keys_sorted = this.data_obj_keys_sorted.reverse();
-        }
-        this.update_rows();
-    }
-
-    filter_rows(obj) {
-        var results = [];
-        for (const div_id of this.data_obj_keys_sorted) {
-            if (obj[div_id].active) {
-                results.push(obj[div_id].element.outerHTML);
-            }
-        }
-        return results;
-    }
-
-    update_div(div_id, content) {
-        /** Updates an element in the dataset. Does not call update_rows(). */
-        if (!(div_id in this.data_obj)) {
-            console.error("div_id not in data_obj:", div_id);
-        } else if (typeof content === "object") {
-            this.data_obj[div_id].element = parseHTML(content.outerHTML)[0];
+function setupProxyListener(target, pre_handler, post_handler) {
+    /** Sets up a listener for variable changes. */
+    var proxy = new Proxy(target, {
+        set: function (t, k, v) {
+            pre_handler.call(t, k, v);
+            t[k] = v;
+            post_handler.call(t, k, v);
             return true;
-        } else if (typeof content === "string") {
-            this.data_obj[div_id].element = parseHTML(content)[0];
-            return true;
-        } else {
-            console.error("Invalid content:", div_id, content);
-        }
-
-        return false;
-    }
-
-    update_rows() {
-        this.clusterize.update(this.filter_rows(this.data_obj));
-    }
-
-    nrows() {
-        return this.clusterize.getRowsAmount();
-    }
-
-    update_item_dims() {
-        if (!this.active) {
-            return;
-        }
-        // Calculate the visible rows and colums for the clusterize-content area.
-        var content_elem = document.getElementById(this.content_elem.id);
-        let n_cols = calc_columns_per_row(content_elem);
-        let n_rows = calc_rows_per_column(content_elem.parentElement, content_elem);
-        
-        n_cols = isNaN(n_cols) || n_cols <= 0 ? 1 : n_cols;
-        n_rows = isNaN(n_rows) || n_rows <= 0 ? 1 : n_rows;
-
-        if (n_cols != this.n_cols || n_rows != this.n_rows) {
-            console.log(`Updating size: cols: ${this.n_cols} -> ${n_cols}, rows: ${this.n_rows} -> ${n_rows}, rows_in_block: ${this.rows_in_block} -> ${n_rows * 3}`);
-
-            this.n_cols = n_cols;
-            this.n_rows = n_rows;
-            this.rows_in_block = this.n_rows;
-            
-            this.rebuild();
-        }
-    }
-
-    rebuild() {
-        this.active = true;
-        this.clusterize.destroy();
-        this.clusterize = new Clusterize(
-            {
-                rows: this.filter_rows(this.data_obj),
-                scrollId: this.scroll_id,
-                contentId: this.content_id,
-                rows_in_block: this.rows_in_block,
-                blocks_in_cluster: this.blocks_in_cluster,
-                show_no_data_row: this.show_no_data_row,
-                no_data_text: this.no_data_text,
-                no_data_class: this.no_data_class,
-                callbacks: this.callbacks,
-            }
-        );
-        this.apply_sort();
-    }
-}
-
-class ExtraNetworksClusterizeTreeList extends ExtraNetworksClusterize {
-    constructor(...args) {
-        super(...args);
-    }
-
-    update_json(json) {
-        for (const [k, v] of Object.entries(json)) {
-            let div_id = k;
-            let parsed_html = parseHTML(v)[0];
-            // parent_id = -1 if item is at root level
-            let parent_id = "parentId" in parsed_html.dataset ? parsed_html.dataset.parentId : -1;
-            let expanded = "expanded" in parsed_html.dataset;
-            let depth = Number(parsed_html.dataset.depth);
-            parsed_html.style.paddingLeft = `${depth}em`;
-            parsed_html.style.boxShadow = getBoxShadow(depth);
-            // Add the updated html to the data object.
-            this.data_obj[div_id] = {
-                element: parsed_html,
-                active: parent_id === -1, // always show root
-                expanded: expanded || (parent_id === -1), // always expand root
-                parent: parent_id,
-                children: [], // populated later
-            };
-        }
-
-        // Build list of children for each element in dataset.
-        for (const [k, v] of Object.entries(this.data_obj)) {
-            if (v.parent === -1) {
-                continue;
-            } else if (!(v.parent in this.data_obj)) {
-                console.error("parent not in data:", v.parent);
-            } else {
-                this.data_obj[v.parent].children.push(k);
-            }
-        }
-
-        // Handle expanding of rows on initial load
-        for (const [k, v] of Object.entries(this.data_obj)) {
-            if (v.parent === -1) {
-                // Always show root level.
-                this.data_obj[k].active = true;
-            } else if (this.data_obj[v.parent].expanded && this.data_obj[v.parent].active) {
-                // Parent is both active and expanded. show child
-                this.data_obj[k].active = true;
-            } else {
-                this.data_obj[k].active = false;
-            }
-        }
-
-        this.apply_sort();
-    }
-
-    remove_child_rows(div_id) {
-        for (const child_id of this.data_obj[div_id].children) {
-            this.data_obj[child_id].active = false;
-            this.data_obj[child_id].expanded = false;
-            delete this.data_obj[child_id].element.dataset.expanded;
-            this.remove_child_rows(child_id);
-        }
-    }
-    
-    add_child_rows(div_id) {
-        for (const child_id of this.data_obj[div_id].children) {
-            this.data_obj[child_id].active = true;
-            if (this.data_obj[child_id].expanded) {
-                this.add_child_rows(child_id);
-            }
-        }
-    }
-}
-
-class ExtraNetworksClusterizeCardsList extends ExtraNetworksClusterize {
-    constructor(...args) {
-        super(...args);
-
-        this.sort_mode_str = "default";
-        this.sort_dir_str = "ascending";
-        this.filter_str = "";
-    }
-
-    update_json(json) {
-        for (const [k, v] of Object.entries(json)) {
-            let div_id = k;
-            let parsed_html = parseHTML(v)[0];
-            // Add the updated html to the data object.
-            this.data_obj[div_id] = {
-                element: parsed_html,
-                active: true,
-            };
-        }
-
-        this.apply_sort();
-    }
-
-    filter_rows(obj) {
-        let filtered_rows = super.filter_rows(obj);
-        let res = [];
-        for (let i = 0; i < filtered_rows.length; i += this.n_cols) {
-            res.push(filtered_rows.slice(i, i + this.n_cols).join(""));
-        }
-        return res;
-    }
-
-    sort_by_name() {
-        this.data_obj_keys_sorted = Object.keys(this.data_obj).sort((a, b) => {
-            return STR_COLLATOR.compare(
-                this.data_obj[a].element.dataset.sortName,
-                this.data_obj[b].element.dataset.sortName,
-            );
-        });
-    }
-
-    sort_by_path() {
-        this.data_obj_keys_sorted = Object.keys(this.data_obj).sort((a, b) => {
-            return STR_COLLATOR.compare(
-                this.data_obj[a].element.dataset.sortPath,
-                this.data_obj[b].element.dataset.sortPath,
-            );
-        });
-    }
-
-    sort_by_created() {
-        this.data_obj_keys_sorted = Object.keys(this.data_obj).sort((a, b) => {
-            return INT_COLLATOR.compare(
-                this.data_obj[a].element.dataset.sortCreated,
-                this.data_obj[b].element.dataset.sortCreated,
-            );
-        });
-    }
-
-    sort_by_modified() {
-        this.data_obj_keys_sorted = Object.keys(this.data_obj).sort((a, b) => {
-            return INT_COLLATOR.compare(
-                this.data_obj[a].element.dataset.sortModified,
-                this.data_obj[b].element.dataset.sortModified,
-            );
-        });
-    }
-
-    set_sort_mode(btn_sort_mode) {
-        this.sort_mode_str = btn_sort_mode.dataset.sortMode.toLowerCase();
-    }
-
-    set_sort_dir(btn_sort_dir) {
-        this.sort_dir_str = btn_sort_dir.dataset.sortDir.toLowerCase();
-    }
-
-    apply_sort() {
-        this.sort_reverse = this.sort_dir_str === "descending";
-
-        switch(this.sort_mode_str) {
-            case "name":
-                this.sort_fn = this.sort_by_name;
-                break;
-            case "path":
-                this.sort_fn = this.sort_by_path;
-                break;
-            case "created":
-                this.sort_fn = this.sort_by_created;
-                break;
-            case "modified":
-                this.sort_fn = this.sort_by_modified;
-                break;
-            default:
-                this.sort_fn = this.sort_by_div_id;
-                break;
-        }
-        super.apply_sort();
-    }
-
-    apply_filter(filter_str) {
-        if (filter_str !== undefined) {
-            this.filter_str = filter_str.toLowerCase();
-        }
-        
-        for (const [k, v] of Object.entries(this.data_obj)) {
-            let search_only = v.element.querySelector(".search_only");
-            let text = Array.prototype.map.call(v.element.querySelectorAll(".search_terms"), function(t) {
-                return t.textContent.toLowerCase();
-            }).join(" ");
-
-            let visible = text.indexOf(this.filter_str) != -1;
-            if (search_only && this.filter_str.length < 4) {
-                visible = false;
-            }
-            this.data_obj[k].active = visible;
-        }
-
-        this.apply_sort();
-        this.update_rows();
-    }
-}
-
-function delegate(target, event_name, selector, handler) {
-    target.addEventListener(event_name, (event) => {
-        if (event.target.closest(selector)) {
-            handler.call(event.target, event);
         }
     });
+    return proxy
 }
 
-function extraNetworksCopyCardPath(event, path) {
-    navigator.clipboard.writeText(path);
-    event.stopPropagation();
-}
-
-
-function setupExtraNetworkEventDelegators() {
-    // Using event delegation will make it so we don't have an event handler
-    // for every single element. This helps to improve performance.
+function proxyJsonUpdated(k, v) {
+    /** Callback triggered when JSON data is updated by the proxy listener. */
+    // use `this` for current object
+    // We don't do error handling here because we want to fail gracefully if data is
+    // not yet present.
+    if (!(v.dataset.tabnameFull in clusterizers)) {
+        // Clusterizers not yet initialized.
+        return;
+    }
+    clusterizers[v.dataset.tabnameFull][v.dataset.proxyName].parseJson(v.dataset.json);
 }
 
 function toggleCss(key, css, enable) {
@@ -474,59 +84,32 @@ function toggleCss(key, css, enable) {
     }
 }
 
-function setup_proxy_listener(target, pre_handler, post_handler) {
-    var proxy = new Proxy(target, {
-        set: function (t, k, v) {
-            pre_handler.call(t, k, v);
-            t[k] = v;
-            post_handler.call(t, k, v);
-            return true;
-        }
-    });
-    return proxy
-}
+function extraNetworksRefreshTab(tabname_full) {
+    if (!(tabname_full in clusterizers)) {
+        return;
+    }
 
-function on_json_will_update(k, v) {
-    // use `this` for current object
-}
+    for (_tabname_full of Object.keys(clusterizers)) {
+        
+        if (_tabname_full === tabname_full) {
+            // Set the selected tab as active since it is now visible on page.
+            clusterizers[_tabname_full].tree_list.enable();
+            clusterizers[_tabname_full].cards_list.enable();
+        } else {
+            // Deactivate all other tabs since they are no longer visible.
+            clusterizers[_tabname_full].tree_list.disable();
+            clusterizers[_tabname_full].cards_list.disable();
+        }
+    }
 
-function on_json_updated(k, v) {
-    // use `this` for current object
-    // We don't do error handling here because 
-    if (k.endsWith("_tree_view")) {
-        let _k = k.slice(0, -("_tree_view").length);
-        if (!(_k in clusterizers) || !("tree_list" in clusterizers[_k])) {
-            return;
-        }
-        Promise.resolve(v)
-            .then(_v => decompress(_v))
-            .then(_v => JSON.parse(_v))
-            .then(_v => clusterizers[_k].tree_list.update_json(_v));
-    } else if (k.endsWith("_cards_view")) {
-        let _k = k.slice(0, -("_cards_view").length);
-        if (!(_k in clusterizers) || !("cards_list" in clusterizers[_k])) {
-            return;
-        }
-        Promise.resolve(v)
-            .then(_v => decompress(_v))
-            .then(_v => JSON.parse(_v))
-            .then(_v => clusterizers[_k].cards_list.update_json(_v));
-    } else {
-        console.error("Unknown key in json listener object:", k, v);
+    clusterizers[tabname_full].tree_list.rebuild();
+    clusterizers[tabname_full].cards_list.rebuild();
+
+    for (var elem of gradioApp().querySelectorAll('.extra-networks-script-data')) {
+        extra_networks_proxy_listener[`${elem.dataset.tabnameFull}_${elem.dataset.proxyName}`] = elem;
     }
 }
 
-const extra_networks_json_proxy = {};
-const extra_networks_proxy_listener = setup_proxy_listener(
-    extra_networks_json_proxy,
-    on_json_will_update,
-    on_json_updated,
-);
-
-function clusterize_setup_done(clusterize) {
-}
-
-const clusterizers = {};
 function setupExtraNetworksForTab(tabname) {
     function registerPrompt(tabname, id) {
         var textarea = gradioApp().querySelector(`#${id} > label > textarea`);
@@ -541,84 +124,103 @@ function setupExtraNetworksForTab(tabname) {
     }
 
     var tabnav = gradioApp().querySelector(`#${tabname}_extra_tabs > div.tab-nav`);
-    var controlsDiv = document.createElement('DIV');
-    controlsDiv.classList.add('extra-networks-controls-div');
+    var controlsDiv = document.createElement("div");
+    controlsDiv.classList.add("extra-networks-controls-div");
     tabnav.appendChild(controlsDiv);
     tabnav.insertBefore(controlsDiv, null);
 
     var this_tab = gradioApp().querySelector(`#${tabname}_extra_tabs`);
     this_tab.querySelectorAll(`:scope > [id^="${tabname}_"]`).forEach(function(elem) {
         let tabname_full = elem.id;
-        let txt_search = gradioApp().querySelector(`#${tabname_full}_extra_search`);
-        let btn_sort_mode = gradioApp().querySelector(`#${tabname_full}_extra_sort_mode`);
-        let btn_sort_dir = gradioApp().querySelector(`#${tabname_full}_extra_sort_dir`);
-        let btn_refresh = gradioApp().querySelector(`#${tabname_full}_extra_refresh`);
+        let txt_search;
+        let btn_sort_mode;
+        let btn_sort_dir;
+        let btn_refresh;
 
-        // If any of the buttons above don't exist, we want to skip this iteration of the loop.
-        if (!txt_search || !btn_sort_mode || !btn_sort_dir || !btn_refresh) {
-            return; // `return` is equivalent of `continue` but for forEach loops.
-        }
-
-        if (!(tabname_full in clusterizers)) {
-            clusterizers[tabname_full] = {tree_list: undefined, cards_list: undefined};
-        }
-
-        // Add a clusterizer for the tree list and for the cards list.
-        clusterizers[tabname_full].tree_list = new ExtraNetworksClusterizeTreeList(
-            {
-                scroll_id: `${tabname_full}_tree_list_scroll_area`,
-                content_id: `${tabname_full}_tree_list_content_area`,
+        var applyFilter = function() {
+            if (!(tabname_full in clusterizers)) {
+                console.error(`applyFilter: ${tabname_full} not in clusterizers:`);
+                return;
             }
-        );
-        clusterizers[tabname_full].cards_list = new ExtraNetworksClusterizeCardsList(
-            {
-                scroll_id: `${tabname_full}_cards_list_scroll_area`,
-                content_id: `${tabname_full}_cards_list_content_area`,
-            }
-        );
-
-
-        var resize_timer;
-        window.addEventListener('resize', () => {
-            clearTimeout(resize_timer);
-            resize_timer = setTimeout(function() {
-                clusterizers[tabname_full].tree_list.update_item_dims();
-                clusterizers[tabname_full].cards_list.update_item_dims();
-            }, 1000); // 100ms
-        });
-
-        var apply_filter = function() {
-            clusterizers[tabname_full].cards_list.set_sort_mode(btn_sort_mode);
-            clusterizers[tabname_full].cards_list.set_sort_dir(btn_sort_dir);
-            clusterizers[tabname_full].cards_list.apply_filter(txt_search.value);
+            // Only touch cards_list. tree_list remains static.
+            clusterizers[tabname_full].cards_list.setSortMode(btn_sort_mode);
+            clusterizers[tabname_full].cards_list.setSortDir(btn_sort_dir);
+            clusterizers[tabname_full].cards_list.applyFilter(txt_search.value);
         };
+        extraNetworksApplyFilter[tabname_full] = applyFilter;
 
-        var apply_sort = function() {
-            clusterizers[tabname_full].cards_list.set_sort_mode(btn_sort_mode);
-            clusterizers[tabname_full].cards_list.set_sort_dir(btn_sort_dir);
-            clusterizers[tabname_full].cards_list.apply_sort();
-        };
-
-        let typing_timer;
-        let done_typing_interval = 500;
-        txt_search.addEventListener("keyup", () => {
-            clearTimeout(typing_timer);
-            if (txt_search.value) {
-                typing_timer = setTimeout(apply_filter, done_typing_interval);
+        var applySort = function() {
+            if (!(tabname_full in clusterizers)) {
+                console.error(`applySort: ${tabname_full} not in clusterizers:`);
+                return;
             }
-        });
+            // Only touch cards_list. tree_list remains static.
+            clusterizers[tabname_full].cards_list.setSortMode(btn_sort_mode);
+            clusterizers[tabname_full].cards_list.setSortDir(btn_sort_dir);
+            clusterizers[tabname_full].cards_list.applyFilter(txt_search.value); // filter also sorts
+        };
+        extraNetworksApplySort[tabname_full] = applySort;
 
-        apply_filter(); // also sorts
+        // Wait for all required elements before setting up the tab.
+        waitForElement(`#${tabname_full}_extra_search`)
+            .then((el) => {
+                txt_search = el;
+            })
+            .then(() => {
+                waitForElement(`#${tabname_full}_extra_sort_mode`)
+                    .then((el) => { btn_sort_mode = el; });
+            })
+            .then(() => {
+                waitForElement(`#${tabname_full}_extra_sort_dir`)
+                    .then((el) => { btn_sort_dir = el; });
+            })
+            .then(() => {
+                waitForElement(`#${tabname_full}_extra_refresh`)
+                    .then((el) => { btn_refresh = el; });
+            })
+            .then(() => {
+                waitForElement(`#${tabname_full}_tree_list_scroll_area > #${tabname_full}_tree_list_content_area`)
+                    .then(() => { return; });
+            })
+            .then(() => {
+                waitForElement(`#${tabname_full}_cards_list_scroll_area > #${tabname_full}_cards_list_content_area`)
+                    .then(() => { return; });
+            })
+            .then(() => {
+                console.log("LOADING TAB:", tabname_full, clusterizers[tabname_full]);
+                // Now that we have our elements in DOM, we create the clusterize lists.
+                clusterizers[tabname_full] = {
+                    tree_list: new ExtraNetworksClusterizeTreeList({
+                            scroll_id: `${tabname_full}_tree_list_scroll_area`,
+                            content_id: `${tabname_full}_tree_list_content_area`,
+                    }),
+                    cards_list: new ExtraNetworksClusterizeCardsList({
+                            scroll_id: `${tabname_full}_cards_list_scroll_area`,
+                            content_id: `${tabname_full}_cards_list_content_area`,
+                    }),
+                };
+                
+                applyFilter();
 
-        extraNetworksApplySort[tabname_full] = apply_sort;
-        extraNetworksApplyFilter[tabname_full] = apply_filter;
+                // Debounce search text input. This way we only search after user is done typing.
+                let typing_timer;
+                let done_typing_interval_ms = 250;
+                txt_search.addEventListener("keyup", () => {
+                    clearTimeout(typing_timer);
+                    if (txt_search.value) {
+                        typing_timer = setTimeout(applyFilter, done_typing_interval_ms);
+                    }
+                });
+                // Triggered on "enter" key or when "x" is clicked to clear search.
+                txt_search.addEventListener("search", applyFilter);
 
-        var controls = gradioApp().querySelector("#" + tabname_full + "_controls");
-        controlsDiv.insertBefore(controls, null);
-
-        if (elem.style.display != "none") {
-            extraNetworksShowControlsForPage(tabname, tabname_full);
-        }
+                // Insert the controls into the page.
+                var controls = gradioApp().querySelector(`#${tabname_full}_controls`);
+                controlsDiv.insertBefore(controls, null);
+                if (elem.style.display != "none") {
+                    extraNetworksShowControlsForPage(tabname, tabname_full);
+                }
+            });
     });
 
     registerPrompt(tabname, tabname + "_prompt");
@@ -666,27 +268,29 @@ function extraNetworksUnrelatedTabSelected(tabname) { // called from python when
     console.log("extraNetworksUnrelatedTabSelected:", tabname);
 }
 
-var extra_networks_resize_handle_fns = {};
 function extraNetworksTabSelected(tabname, id, showPrompt, showNegativePrompt, tabname_full) { // called from python when user selects an extra networks tab
     extraNetworksMovePromptToTab(tabname, id, showPrompt, showNegativePrompt);
     extraNetworksShowControlsForPage(tabname, tabname_full);
     console.log("extraNetworksTabSelected:", tabname, id, tabname_full);
+
     for (_tabname_full of Object.keys(clusterizers)) {
-        if (_tabname_full !== tabname_full) {
-            clusterizers[_tabname_full].tree_list.active = false;
-            clusterizers[_tabname_full].cards_list.active = false;
-            window.removeEventListener("resizeHandleResized", extra_networks_resize_handle_fns[_tabname_full]);
+        if (_tabname_full === tabname_full) {
+            // Set the selected tab as active since it is now visible on page.
+            clusterizers[_tabname_full].tree_list.enable();
+            clusterizers[_tabname_full].cards_list.enable();
+        } else {
+            // Deactivate all other tabs since they are no longer visible.
+            clusterizers[_tabname_full].tree_list.disable();
+            clusterizers[_tabname_full].cards_list.disable();
         }
     }
-    function fn(event) {
-        clusterizers[tabname_full].tree_list.update_item_dims();
-        clusterizers[tabname_full].cards_list.update_item_dims();
-        event.stopPropagation();
+
+    if (!document.body.contains(clusterizers[tabname_full].tree_list.scroll_elem)) {
+        clusterizers[tabname_full].tree_list.rebuild();
     }
-    extra_networks_resize_handle_fns[tabname_full] = fn;
-    window.addEventListener("resizeHandleResized", fn);
-    clusterizers[tabname_full].tree_list.rebuild();
-    clusterizers[tabname_full].cards_list.rebuild();
+    if (!document.body.contains(clusterizers[tabname_full].cards_list.scroll_elem)) {
+        clusterizers[tabname_full].cards_list.rebuild();
+    }
 }
 
 function applyExtraNetworkFilter(tabname_full) {
@@ -704,26 +308,43 @@ function applyExtraNetworkSort(tabname_full) {
 }
 
 function setupExtraNetworksData() {
+    // Manually force read the json data.
+    //let script_data_tree = document.querySelector(`.extra-networks-script-data[data-proxy-name='${tabname_full}_tree_view']`);
+    //let script_data_cards = document.querySelector(`.extra-networks-script-data[data-proxy-name='${tabname_full}_cards_view']`);
+    //proxyJsonUpdated(script_data_tree.dataset.proxyName, script_data_tree.dataset.json);
+    //proxyJsonUpdated(script_data_cards.dataset.proxyName, script_data_cards.dataset.json);
     for (var elem of gradioApp().querySelectorAll('.extra-networks-script-data')) {
-        extra_networks_proxy_listener[elem.dataset.proxyName] = elem.dataset.json;
+        extra_networks_proxy_listener[`${elem.dataset.tabnameFull}_${elem.dataset.proxyName}`] = elem;
     }
 }
-
-var extraNetworksApplyFilter = {};
-var extraNetworksApplySort = {};
-var activePromptTextarea = {};
 
 function setupExtraNetworks() {
     setupExtraNetworksForTab('txt2img');
     setupExtraNetworksForTab('img2img');
-    setupExtraNetworkEventDelegators();
+
+    // Handle window resizes. Delay of 500ms after resize before firing an event
+    // as a way of "debouncing" resizes.
+    var resize_timer;
+    window.addEventListener("resize", () => {
+        clearTimeout(resize_timer);
+        resize_timer = setTimeout(function() {
+            // Update rows for each list.
+            for (_tabname_full of Object.keys(clusterizers)) {
+                clusterizers[_tabname_full].tree_list.updateRows();
+                clusterizers[_tabname_full].cards_list.updateRows();
+            }
+        }, 500); // ms
+    });
+    // Handle resizeHandle resizes. Only fires on mouseup after resizing.
+    window.addEventListener("resizeHandleResized", (e) => {
+        for (_tabname_full of Object.keys(clusterizers)) {
+            // Update rows for each list.
+            clusterizers[_tabname_full].tree_list.updateRows();
+            clusterizers[_tabname_full].cards_list.updateRows();
+        }
+    });
 }
 
-var re_extranet = /<([^:^>]+:[^:]+):[\d.]+>(.*)/;
-var re_extranet_g = /<([^:^>]+:[^:]+):[\d.]+>/g;
-
-var re_extranet_neg = /\(([^:^>]+:[\d.]+)\)/;
-var re_extranet_g_neg = /\(([^:^>]+:[\d.]+)\)/g;
 function tryToRemoveExtraNetworkFromPrompt(textarea, text, isNeg) {
     var m = text.match(isNeg ? re_extranet_neg : re_extranet);
     var replaced = false;
@@ -803,14 +424,7 @@ function extraNetworksTreeProcessFileClick(event, btn, tabname, extra_networks_t
      * @param tabname                   The name of the active tab in the sd webui. Ex: txt2img, img2img, etc.
      * @param extra_networks_tabname    The id of the active extraNetworks tab. Ex: lora, checkpoints, etc.
      */
-    /*
-    cardClicked(
-        tabname,
-        btn.dataset.prompt,
-        btn.dataset.neg_prompt,
-        btn.dataset.allow_neg,
-    );
-    */
+    // NOTE: Currently unused.
     return;
 }
 
@@ -835,21 +449,21 @@ function extraNetworksTreeProcessDirectoryClick(event, btn, tabname, extra_netwo
     const div_id = btn.dataset.divId;
     const tabname_full = `${tabname}_${extra_networks_tabname}`;
 
-    function _expand_or_collapse(_btn) {
+    function _expandOrCollapse(_btn) {
         // Expands/Collapses all children of the button.
         if ("expanded" in _btn.dataset) {
             delete _btn.dataset.expanded;
-            clusterizers[tabname_full].tree_list.remove_child_rows(div_id);
+            clusterizers[tabname_full].tree_list.removeChildRows(div_id);
         } else {
             _btn.dataset.expanded = "";
-            clusterizers[tabname_full].tree_list.add_child_rows(div_id);
+            clusterizers[tabname_full].tree_list.addChildRows(div_id);
         }
         // update html after changing attr.
-        clusterizers[tabname_full].tree_list.update_div(div_id, _btn.outerHTML);
-        clusterizers[tabname_full].tree_list.update_rows();
+        clusterizers[tabname_full].tree_list.updateDivContent(div_id, _btn.outerHTML);
+        clusterizers[tabname_full].tree_list.updateRows();
     }
 
-    function _remove_selected_from_all() {
+    function _removeSelectedFromAll() {
         // Removes the `selected` attribute from all buttons.
         var sels = document.querySelectorAll(".tree-list-item");
         [...sels].forEach(el => {
@@ -857,13 +471,13 @@ function extraNetworksTreeProcessDirectoryClick(event, btn, tabname, extra_netwo
         });
     }
 
-    function _select_button(_btn) {
+    function _selectButton(_btn) {
         // Removes `data-selected` attribute from all buttons then adds to passed button.
-        _remove_selected_from_all();
+        _removeSelectedFromAll();
         _btn.dataset.selected = "";
     }
 
-    function _update_search(_tabname, _extra_networks_tabname, _search_text) {
+    function _updateSearch(_tabname, _extra_networks_tabname, _search_text) {
         // Update search input with select button's path.
         var search_input_elem = gradioApp().querySelector("#" + tabname + "_" + extra_networks_tabname + "_extra_search");
         search_input_elem.value = _search_text;
@@ -874,17 +488,17 @@ function extraNetworksTreeProcessDirectoryClick(event, btn, tabname, extra_netwo
 
     // If user clicks on the chevron, then we do not select the folder.
     if (true_targ.matches(".tree-list-item-action--leading, .tree-list-item-action-chevron")) {
-        _expand_or_collapse(btn);
+        _expandOrCollapse(btn);
     } else {
         // User clicked anywhere else on the button.
         if ("selected" in btn.dataset) {
             // If folder is selected, deselect button.
             delete btn.dataset.selected;
-            _update_search(tabname, extra_networks_tabname, "");
+            _updateSearch(tabname, extra_networks_tabname, "");
         } else {
             // If folder is not selected, select it.
-            _select_button(btn, tabname, extra_networks_tabname);
-            _update_search(tabname, extra_networks_tabname, btn.dataset.path);
+            _selectButton(btn, tabname, extra_networks_tabname);
+            _updateSearch(tabname, extra_networks_tabname, btn.dataset.path);
         }
     }
 }
@@ -1008,12 +622,10 @@ function extraNetworksControlRefreshOnClick(event, tabname, extra_networks_tabna
      * @param tabname                   The name of the active tab in the sd webui. Ex: txt2img, img2img, etc.
      * @param extra_networks_tabname    The id of the active extraNetworks tab. Ex: lora, checkpoints, etc.
      */
-    var btn_refresh_internal = gradioApp().getElementById(tabname + "_" + extra_networks_tabname + "_extra_refresh_internal");
+    console.log("CLICKED REFRESH");
+    var btn_refresh_internal = gradioApp().getElementById(`${tabname}_${extra_networks_tabname}_extra_refresh_internal`);
     btn_refresh_internal.dispatchEvent(new Event("click"));
 }
-
-var globalPopup = null;
-var globalPopupInner = null;
 
 function closePopup() {
     if (!globalPopup) return;
@@ -1044,7 +656,6 @@ function popup(contents) {
     globalPopup.style.display = "flex";
 }
 
-var storedPopupIds = {};
 function popupId(id) {
     if (!storedPopupIds[id]) {
         storedPopupIds[id] = gradioApp().getElementById(id);
@@ -1151,7 +762,7 @@ function requestGet(url, data, handler, errorHandler) {
     xhr.send(js);
 }
 
-function extraNetworksCopyPath(event, path) {
+function extraNetworksCopyPathToClipboard(event, path) {
     navigator.clipboard.writeText(path);
     event.stopPropagation();
 }
@@ -1171,8 +782,6 @@ function extraNetworksRequestMetadata(event, extraPage, cardName) {
 
     event.stopPropagation();
 }
-
-var extraPageUserMetadataEditors = {};
 
 function extraNetworksEditUserMetadata(event, tabname, extraPage, cardName) {
     var id = tabname + '_' + extraPage + '_edit_user_metadata';
@@ -1218,38 +827,4 @@ window.addEventListener("keydown", function(event) {
     }
 });
 
-/**
- * Setup custom loading for this script.
- * We need to wait for all of our HTML to be generated in the extra networks tabs
- * before we can actually run the `setupExtraNetworks` function.
- * The `onUiLoaded` function actually runs before all of our extra network tabs are
- * finished generating. Thus we needed this new method.
- *
- */
-
-var uiAfterScriptsCallbacks = [];
-var uiAfterScriptsTimeout = null;
-var executedAfterScripts = false;
-
-function scheduleAfterScriptsCallbacks() {
-    clearTimeout(uiAfterScriptsTimeout);
-    uiAfterScriptsTimeout = setTimeout(function() {
-        executeCallbacks(uiAfterScriptsCallbacks);
-    }, 200);
-}
-
-onUiLoaded(function() {
-    var mutationObserver = new MutationObserver(function(m) {
-        let existingSearchfields = gradioApp().querySelectorAll("[id$='_extra_search']").length;
-        let neededSearchfields = gradioApp().querySelectorAll("[id$='_extra_tabs'] > .tab-nav > button").length - 2;
-
-        if (!executedAfterScripts && existingSearchfields >= neededSearchfields) {
-            mutationObserver.disconnect();
-            executedAfterScripts = true;
-            scheduleAfterScriptsCallbacks();
-        }
-    });
-    mutationObserver.observe(gradioApp(), {childList: true, subtree: true});
-});
-
-uiAfterScriptsCallbacks.push(setupExtraNetworks);
+onUiLoaded(setupExtraNetworks);
