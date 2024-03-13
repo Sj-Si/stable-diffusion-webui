@@ -1389,42 +1389,70 @@ body.resizing .resize-handle {
 
 
 /* ==== SEARCH INPUT ACTIONS ==== */
-/* Add icon to left side of <input> */
-.extra-network-control .extra-network-control--search::before {
-    content: "🔎︎";
-    position: absolute;
-    margin: 0.5rem;
-    font-size: 1rem;
-    color: var(--input-placeholder-color);
-}
-
-.extra-network-control .extra-network-control--search {
-    display: inline-flex;
+.extra-network-control--search {
+    display: flex;
+    flex-direction: row;
     position: relative;
+    outline: var(--input-border-width) solid var(--input-border-color);
+    border-radius: var(--input-radius);
+    align-items: center;
+    place-content: center;
+    gap: var(--spacing-sm);
+    box-sizing: border-box;
+    background: var(--input-background-fill);
 }
 
-.extra-network-control .extra-network-control--search .extra-network-control--search-text {
-    border: 1px solid var(--button-secondary-border-color);
-    border-radius: 0.5rem;
-    color: var(--button-secondary-text-color);
-    background-color: transparent;
-    width: 100%;
-    padding-left: 2rem;
-    line-height: 1rem;
+/* Add outline to the contianer when the inner search-text <input> has focus. */
+.extra-network-control--search:focus-within {
+    outline: calc(var(--input-border-width) * 2) solid var(--input-border-color-focus);
 }
 
-/* <input> clear button (x on right side) styling */
-.extra-network-control .extra-network-control--search .extra-network-control--search-text::-webkit-search-cancel-button {
-    -webkit-appearance: none;
-    appearance: none;
+/* Search icon on left of container. */
+.extra-network-control--search .extra-network-control--search-icon {
+    fill: var(--input-placeholder-color);
+    background: transparent;
+    user-select: none;
+    padding: var(--input-padding) var(--spacing-sm) var(--input-padding) var(--input-padding);
+    margin: 0;
+}
+
+/* <input> text in container. */
+.extra-network-control--search .extra-network-control--search-text {
+    display: flex;
+    color: var(--body-text-color);
+    background: transparent;
+    font-weight: var(--input-text-weight);
+    font-size: var(--input-text-size);
+    line-height: var(--line-sm);
+    padding: var(--input-padding) var(--spacing-sm) var(--input-padding) var(--spacing-sm);
+    margin: 0;
+    border: none;
+    outline: none;
+}
+
+/* Make "clear" button visible when user has entered text in search-text <input>. */
+.extra-network-control--search .extra-network-control--search-text:not(:placeholder-shown)+.extra-network-control--search-clear {
+    visibility: visible;
+}
+
+/* "Clear" button on right of container. Invisible until user enters text in <input>. */
+.extra-network-control--search .extra-network-control--search-clear {
+    display: flex;
+    visibility: hidden;
+    fill: var(--input-placeholder-color);
+    background: transparent;
+    border: var(--input-border-width) solid transparent;
+    border-radius: 0 var(--input-radius) var(--input-radius) 0;
+    transition: background var(--button-transition);
+    user-select: none;
     cursor: pointer;
-    height: 1rem;
-    width: 1rem;
-    mask-image: url('data:image/svg+xml,<svg fill="%23000000" viewBox="0 0 20 20" xmlns="http://www.w3.org/2000/svg"><g id="SVGRepo_bgCarrier" stroke-width="0"></g><g id="SVGRepo_tracerCarrier" stroke-linecap="round" stroke-linejoin="round"></g><g id="SVGRepo_iconCarrier"><path d="M10 1.6a8.4 8.4 0 1 0 0 16.8 8.4 8.4 0 0 0 0-16.8zm4.789 11.461L13.06 14.79 10 11.729l-3.061 3.06L5.21 13.06 8.272 10 5.211 6.939 6.94 5.211 10 8.271l3.061-3.061 1.729 1.729L11.728 10l3.061 3.061z"></path></g></svg>');
-    mask-repeat: no-repeat;
-    mask-position: center center;
-    mask-size: 100%;
-    background-color: var(--input-placeholder-color);
+    align-self: stretch; /* forces button to fill vertical */
+    align-items: center;
+    padding: var(--input-padding);
+}
+
+.extra-network-control--search .extra-network-control--search-clear:hover {
+    background: var(--button-secondary-background-fill-hover);
 }
 
 /* ==== SORT ICON ACTIONS ==== */

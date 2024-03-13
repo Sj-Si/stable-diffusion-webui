@@ -212,7 +212,7 @@ function setupExtraNetworksForTab(tabname) {
                     }
                 });
                 // Triggered on "enter" key or when "x" is clicked to clear search.
-                txt_search.addEventListener("search", applyFilter);
+                txt_search.addEventListener("extra-network-control--search-clear", applyFilter);
 
                 // Insert the controls into the page.
                 var controls = gradioApp().querySelector(`#${tabname_full}_controls`);
@@ -523,16 +523,24 @@ function extraNetworksTreeOnClick(event, tabname, extra_networks_tabname) {
     event.stopPropagation();
 }
 
-function extraNetworksControlSortModeOnClick(event, tabname, extra_networks_tabname) {
+function extraNetworksControlSearchClearOnClick(event, tabname_full) {
+    /** Clears the search <input> text. */
+    let clear_btn = event.target.closest(".extra-network-control--search-clear");
+    let txt_search = clear_btn.previousElementSibling;
+    txt_search.value = "";
+    txt_search.dispatchEvent(new CustomEvent("extra-network-control--search-clear", {}));
+}
+
+function extraNetworksControlSortModeOnClick(event, tabname_full) {
     /**
      * Handles `onclick` events for the Sort Mode button.
      *
      * Modifies the data attributes of the Sort Mode button to cycle between
      * various sorting modes.
      *
-     * @param event                     The generated event.
-     * @param tabname                   The name of the active tab in the sd webui. Ex: txt2img, img2img, etc.
-     * @param extra_networks_tabname    The id of the active extraNetworks tab. Ex: lora, checkpoints, etc.
+     * @param event         The generated event.
+     * @param tabname_full  The full active tabname.
+     *                      i.e. txt2img_lora, img2img_checkpoints, etc.
      */
     switch(event.currentTarget.dataset.sortMode) {
         case "path":
@@ -552,19 +560,19 @@ function extraNetworksControlSortModeOnClick(event, tabname, extra_networks_tabn
             event.currentTarget.setAttribute("title", "Sort by path");
             break;
     }
-    applyExtraNetworkSort(`${tabname}_${extra_networks_tabname}`);
+    applyExtraNetworkSort(tabname_full);
 }
 
-function extraNetworksControlSortDirOnClick(event, tabname, extra_networks_tabname) {
+function extraNetworksControlSortDirOnClick(event, tabname_full) {
     /**
      * Handles `onclick` events for the Sort Direction button.
      *
      * Modifies the data attributes of the Sort Direction button to cycle between
      * ascending and descending sort directions.
      *
-     * @param event                     The generated event.
-     * @param tabname                   The name of the active tab in the sd webui. Ex: txt2img, img2img, etc.
-     * @param extra_networks_tabname    The id of the active extraNetworks tab. Ex: lora, checkpoints, etc.
+     * @param event         The generated event.
+     * @param tabname_full  The full active tabname.
+     *                      i.e. txt2img_lora, img2img_checkpoints, etc.
      */
     if (event.currentTarget.dataset.sortDir.toLowerCase() == "ascending") {
         event.currentTarget.dataset.sortDir = "descending";
@@ -573,20 +581,20 @@ function extraNetworksControlSortDirOnClick(event, tabname, extra_networks_tabna
         event.currentTarget.dataset.sortDir = "ascending";
         event.currentTarget.setAttribute("title", "Sort ascending");
     }
-    applyExtraNetworkSort(`${tabname}_${extra_networks_tabname}`);
+    applyExtraNetworkSort(tabname_full);
 }
 
-function extraNetworksControlTreeViewOnClick(event, tabname, extra_networks_tabname) {
+function extraNetworksControlTreeViewOnClick(event, tabname_full) {
     /**
      * Handles `onclick` events for the Tree View button.
      *
      * Toggles the tree view in the extra networks pane.
      *
-     * @param event                     The generated event.
-     * @param tabname                   The name of the active tab in the sd webui. Ex: txt2img, img2img, etc.
-     * @param extra_networks_tabname    The id of the active extraNetworks tab. Ex: lora, checkpoints, etc.
+     * @param event         The generated event.
+     * @param tabname_full  The full active tabname.
+     *                      i.e. txt2img_lora, img2img_checkpoints, etc.
      */
-    const tree = gradioApp().getElementById(`${tabname}_${extra_networks_tabname}_tree_list_scroll_area`);
+    const tree = gradioApp().getElementById(`${tabname_full}_tree_list_scroll_area`);
     const parent = tree.parentElement;
     let resizeHandle = parent.querySelector('.resize-handle');
     tree.classList.toggle("hidden");
@@ -609,7 +617,7 @@ function extraNetworksControlTreeViewOnClick(event, tabname, extra_networks_tabn
     event.currentTarget.classList.toggle("extra-network-control--enabled");
 }
 
-function extraNetworksControlRefreshOnClick(event, tabname, extra_networks_tabname) {
+function extraNetworksControlRefreshOnClick(event, tabname_full) {
     /**
      * Handles `onclick` events for the Refresh Page button.
      *
@@ -618,12 +626,12 @@ function extraNetworksControlRefreshOnClick(event, tabname, extra_networks_tabna
      * event handler that refreshes the page. So what this function here does
      * is it manually raises a `click` event on that button.
      *
-     * @param event                     The generated event.
-     * @param tabname                   The name of the active tab in the sd webui. Ex: txt2img, img2img, etc.
-     * @param extra_networks_tabname    The id of the active extraNetworks tab. Ex: lora, checkpoints, etc.
+     * @param event         The generated event.
+     * @param tabname_full  The full active tabname.
+     *                      i.e. txt2img_lora, img2img_checkpoints, etc.
      */
     console.log("CLICKED REFRESH");
-    var btn_refresh_internal = gradioApp().getElementById(`${tabname}_${extra_networks_tabname}_extra_refresh_internal`);
+    var btn_refresh_internal = gradioApp().getElementById(`${tabname_full}_extra_refresh_internal`);
     btn_refresh_internal.dispatchEvent(new Event("click"));
 }
 
