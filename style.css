@@ -1169,8 +1169,13 @@ div.accordions > div.input-accordion.input-accordion-open{
     top: 0.5em;
 }
 
-body.resizing {
+
+body.resizing.resizing-col {
     cursor: col-resize !important;
+}
+
+body.resizing.resizing-row {
+    cursor: row-resize !important;
 }
 
 body.resizing * {
@@ -1178,25 +1183,67 @@ body.resizing * {
 }
 
 body.resizing .resize-handle {
-    pointer-events: initial !important;
+	pointer-events: initial !important;
+}
+
+.resize-handle-container {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    height: 100%;
+}
+
+.resize-handle-row {
+	display: flex;
+	flex-direction: row;
+    overflow: hidden;
+}
+
+.resize-handle-col {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    overflow: hidden;
 }
 
 .resize-handle {
     position: relative;
-    cursor: col-resize;
-    grid-column: 2 / 3;
-    min-width: 16px !important;
-    max-width: 16px !important;
     height: 100%;
+    width: 100%;
+	z-index: 0;
+	background: transparent;
 }
 
 .resize-handle::after {
-    content: '';
+    content: "";
     position: absolute;
+    z-index: -1;
+}
+
+.resize-handle--row {
+    cursor: row-resize;
+}
+
+.resize-handle--col {
+    cursor: col-resize;
+}
+
+.resize-handle--col::after {
     top: 0;
     bottom: 0;
-    left: 7.5px;
-    border-left: 1px dashed var(--border-color-primary);
+    left: 50%;
+	transform: translateX(-50%);
+	border: 1px dashed white;
+}
+
+.resize-handle--row::after {
+    left: 0;
+    right: 0;
+    top: 50%;
+	transform: translateY(-50%);
+	border-top: 1px dashed white;
 }
 
 /* ========================= */
@@ -1224,8 +1271,6 @@ body.resizing .resize-handle {
 
 .extra-network-dirs-hidden .extra-network-dirs{ display: none; }
 .extra-network-dirs-hidden .extra-network-tree{ display: none; }
-.extra-network-dirs-hidden .resize-handle { display: none; }
-.extra-network-dirs-hidden .resize-handle-row { display: flex !important; }
 
 .extra-network-pane .extra-network-tree {
     flex: 1;
